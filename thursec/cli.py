@@ -15,6 +15,7 @@ from pathlib import Path
 from . import __version__
 from .core.engine import Engine, Registry
 from .core.module import Category
+from .core.dashboard import render_dashboard
 from .core.report import Report
 from .core.scope import Scope, ScopeError
 from .core.store import FindingStore, StoreError
@@ -66,6 +67,23 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Path to the SQLite findings store to read from.",
     )
     diff.add_argument("target", help="Target whose last two runs to compare.")
+
+    dash = sub.add_parser(
+        "dashboard",
+        help="Generate an HTML posture dashboard over a findings store.",
+    )
+    dash.add_argument(
+        "--store", type=Path, required=True,
+        help="Path to the SQLite findings store to read from.",
+    )
+    dash.add_argument(
+        "target", nargs="?",
+        help="Target to report on. Default: the most recently run target.",
+    )
+    dash.add_argument(
+        "-o", "--output", type=Path,
+        help="Write the dashboard here (default: dashboard.html).",
+    )
     return p
 
 
@@ -205,6 +223,32 @@ def _cmd_diff(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_dashboard(args: argparse.Namespace) -> int:
+    try:
+        store = FindingStore(args.store)
+        target = args.target or _resolve_latest_target(store)
+        if target is None:
+            print(f"No runs found in {args.store}; nothing to render.")
+            return 0
+        if not store.list_runs(target=target):
+            print(f"No runs found for {target!r} in {args.store}.")
+            return 0
+        html = render_dashboard(store, target)
+    except StoreError as e:
+        print(f"store error: {e}", file=sys.stderr)
+        return 2
+
+    out = args.output or Path("dashboard.html")
+    out.write_text(html)
+    print(f"Dashboard written to {out}")
+    return 0
+
+
+def _resolve_latest_target(store: FindingStore) -> str | None:
+    runs = store.list_runs()
+    return runs[0]["target"] if runs else None
+
+
 def main(argv: list[str] | None = None) -> int:
     args = _build_parser().parse_args(argv)
     registry = Registry().discover()
@@ -216,6 +260,8 @@ def main(argv: list[str] | None = None) -> int:
         return asyncio.run(_cmd_run(registry, args))
     if args.command == "diff":
         return _cmd_diff(args)
+    if args.command == "dashboard":
+        return _cmd_dashboard(args)
     return 1
 
 
