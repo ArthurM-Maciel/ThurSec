@@ -43,10 +43,24 @@ recusado no review, independentemente da qualidade técnica.
   async sem shell com timeout, `Engine`/`Registry` com descoberta automática,
   `RunContext`, relatórios JSON/Markdown/HTML.
 - `[FEITO]` **CLI** (`thursec/cli.py`): `list`, `run` (por `-m` módulo, `-c`
-  categoria, ou passivo por padrão), saída `-o`.
-- `[FEITO]` **Módulo `config_audit.tls_headers`** — expiração de certificado,
-  versão de TLS, headers de segurança HTTP. Pure-stdlib, `ACTIVE`.
-- `[FEITO]` **Cobertura de testes** do núcleo (scope, findings, engine).
+  categoria, ou passivo por padrão), saída `-o`; persistência opt-in com
+  `run --store` e comando `diff` entre runs (PLAT1).
+- `[FEITO]` **Validador de target compartilhado** (`thursec/core/target.py`) —
+  defesa contra *argument injection* em alvos passados a binários externos;
+  usado por `recon.nmap` e `vuln.nuclei`.
+- `[FEITO]` **Findings store histórico** (`thursec/core/store.py`, PLAT1) —
+  SQLite local, dedup por fingerprint (first_seen/last_seen) e diff entre scans.
+- `[FEITO]` **6 módulos no `main`:**
+  - `recon.ct_subdomains` (`PASSIVE`) — subdomínios via Certificate Transparency.
+  - `recon.nmap` (`ACTIVE`, scope-gated) — port/service scan via `nmap`.
+  - `vuln.nuclei` (`ACTIVE`, scope-gated) — wrapper do `nuclei`.
+  - `deps_secrets.secret_scan` (`PASSIVE`) — scanner de segredos por padrões.
+  - `config_audit.supabase` (`PASSIVE`) — auditoria de postura Supabase.
+  - `config_audit.tls_headers` (`ACTIVE`) — expiração de cert, TLS e headers HTTP.
+- `[FEITO]` **TUI em Textual** (UX1.1) — navegação de módulos e findings sobre o
+  engine, respeitando o scope gate.
+- `[FEITO]` **Cobertura de testes** do núcleo (scope, findings, engine) e dos
+  módulos entregues.
 
 ---
 
@@ -67,7 +81,7 @@ fontes públicas, sem enviar pacotes ao alvo (`PASSIVE`, roda sem scope gate).
 **Valor:** dá o inventário inicial de onde procurar — o primeiro passo de todo
 assessment, e seguro de rodar por ser passivo.
 
-- **R1.1 `[EM DEV]` Enumeração de subdomínios via Certificate Transparency**
+- **R1.1 `[FEITO]` Enumeração de subdomínios via Certificate Transparency**
   (`recon.ct_subdomains`)
   - *Como* analista, *quero* listar subdomínios de um domínio consultando logs
     de CT públicos, *para* conhecer a superfície sem tocar no alvo.
@@ -107,7 +121,7 @@ vuln e config.
   - **Critério de aceite:** `ACTIVE`; evidência = banner cru; não assume que o
     banner é confiável (apenas reporta).
 
-- **R2.3 `[PRÓXIMO]` Port/service scan via `nmap`**
+- **R2.3 `[FEITO]` Port/service scan via `nmap`**
   - *Como* analista, *quero* rodar `nmap` contra um host em escopo e receber
     portas/serviços como `Finding`s, *para* ter o primeiro módulo `ACTIVE` "de
     verdade" que exercita o scope gate de ponta a ponta.
@@ -158,14 +172,14 @@ segurança operacional.
   - **Critério de aceite:** engine solicita confirmação para `INTRUSIVE`; sem
     confirmação, módulo é `skipped` com `skip_reason`; documentado no contrato.
 
-### Épico V3 — Wrapper do `nuclei` com parse estruturado `[PRÓXIMO]`
+### Épico V3 — Wrapper do `nuclei` com parse estruturado `[FEITO]`
 **Objetivo:** integrar o scanner `nuclei` ao engine, convertendo seus resultados
 em `Finding`s do ThurSec, como primeiro grande salto de cobertura para pentest.
 **Valor:** o maior incremento de valor para pentest autorizado — milhares de
 templates da comunidade entram no toolkit com findings normalizados e reporte
 unificado, sem perder scope gate nem padronização.
 
-- **V3.1 `[PRÓXIMO]` Módulo `vuln.nuclei` (ACTIVE, scope-gated)**
+- **V3.1 `[FEITO]` Módulo `vuln.nuclei` (ACTIVE, scope-gated)**
   - *Como* pentester, *quero* rodar o `nuclei` contra um alvo em escopo e receber
     os achados como `Finding`s, *para* aproveitar os templates sem sair do fluxo.
   - **Critério de aceite:** `ACTIVE` → scope-gated (recusa alvo fora do
@@ -191,7 +205,7 @@ unificado, sem perder scope gate nem padronização.
 **Valor:** prevenção barata de um dos vetores de comprometimento mais comuns;
 `PASSIVE` (lê arquivos locais, não toca em alvo remoto).
 
-- **D1.1 `[EM DEV]` Scanner de segredos por padrões** (`deps_secrets.secret_scan`)
+- **D1.1 `[FEITO]` Scanner de segredos por padrões** (`deps_secrets.secret_scan`)
   - *Como* desenvolvedor, *quero* varrer uma árvore de arquivos em busca de
     chaves/tokens/segredos, *para* removê-los antes do commit.
   - **Critério de aceite:** `PASSIVE`; conjunto de regex para padrões comuns
@@ -257,14 +271,14 @@ unificado, sem perder scope gate nem padronização.
   - **Critério de aceite:** `PASSIVE`; escopo restrito aos ativos próprios
     declarados; severidade por regra.
 
-### Épico C3 — Auditoria de postura Supabase / cloud `[PRÓXIMO]`
+### Épico C3 — Auditoria de postura Supabase / cloud `[FEITO]`
 **Objetivo:** auditar a configuração de segurança de projetos Supabase/cloud da
 *própria* organização (casa com a infra real da Raiô, que usa Supabase).
 **Valor:** detecta exposições de alto impacto — RLS desligado, policies
 permissivas, chaves vazadas, buckets públicos — direto no stack em produção,
 com achados acionáveis.
 
-- **C3.1 `[PRÓXIMO]` Checagem de RLS e policies**
+- **C3.1 `[FEITO]` Checagem de RLS e policies**
   - *Como* defensor, *quero* verificar se Row Level Security está habilitado nas
     tabelas e se as policies não são permissivas demais, *para* evitar vazamento
     de dados.
@@ -273,14 +287,14 @@ com achados acionáveis.
     `HIGH`/`CRITICAL` por tabela sem RLS ou com policy aberta; evidência com
     nome da tabela/policy; recomendação acionável.
 
-- **C3.2 `[PRÓXIMO]` Chaves expostas e segredos de configuração**
+- **C3.2 `[FEITO]` Chaves expostas e segredos de configuração**
   - *Como* defensor, *quero* detectar uso indevido da `service_role`/chaves
     sensíveis expostas no cliente, *para* cortar um vetor crítico.
   - **Critério de aceite:** `PASSIVE`; `CRITICAL` para chave de serviço exposta;
     reaproveita padrões do `deps_secrets.secret_scan` quando aplicável; nunca
     loga o segredo completo além do necessário para verificação.
 
-- **C3.3 `[BACKLOG]` Buckets de storage públicos e exposição de dados**
+- **C3.3 `[FEITO]` Buckets de storage públicos e exposição de dados**
   - *Como* defensor, *quero* listar buckets/objetos com acesso público não
     intencional, *para* fechar exposições de dados.
   - **Critério de aceite:** `PASSIVE` sobre o projeto próprio; `Finding` por
@@ -352,7 +366,7 @@ atacante.
 **Objetivo:** tornar o toolkit usável por menu, além da CLI.
 **Valor:** acessibilidade para quem não decora flags; visualização de findings.
 
-- **UX1.1 `[EM DEV]` TUI em Textual**
+- **UX1.1 `[FEITO]` TUI em Textual**
   - *Como* usuário, *quero* navegar módulos, configurar escopo e ver findings em
     uma interface de terminal, *para* operar sem decorar comandos.
   - **Critério de aceite:** lista módulos do registry; respeita o scope gate
@@ -390,7 +404,7 @@ produto útil de forma contínua (regressões, confirmação de correções, ten
 **Pré-requisito do épico "Dashboard" (PLAT2):** o dashboard consome o store; não
 há dashboard sem persistência.
 
-- **PLAT1.1 `[BACKLOG]` Persistir runs e findings em SQLite**
+- **PLAT1.1 `[FEITO]` Persistir runs e findings em SQLite**
   - *Como* operador, *quero* que cada run e seus findings sejam gravados num
     store local, *para* manter histórico entre execuções.
   - **Critério de aceite:** schema de `runs` e `findings` em SQLite; grava run
@@ -398,14 +412,14 @@ há dashboard sem persistência.
     idempotente por `(run_id, fingerprint)`; store é opt-in (flag na CLI) e não
     quebra o fluxo efêmero atual; coberto por testes.
 
-- **PLAT1.2 `[BACKLOG]` Deduplicação e histórico por fingerprint**
+- **PLAT1.2 `[FEITO]` Deduplicação e histórico por fingerprint**
   - *Como* operador, *quero* que o mesmo problema reaparecendo não gere registro
     novo, *para* medir persistência de uma issue ao longo do tempo.
   - **Critério de aceite:** dedup por `Finding.fingerprint`; registra
     first_seen/last_seen por fingerprint; não cria duplicata ao re-scanear alvo
     inalterado (verificado em teste).
 
-- **PLAT1.3 `[BACKLOG]` Diff entre dois scans**
+- **PLAT1.3 `[FEITO]` Diff entre dois scans**
   - *Como* operador, *quero* comparar o run atual com um anterior, *para* ver o
     que surgiu, sumiu ou mudou de severidade.
   - **Critério de aceite:** comando/API que, dados dois run ids (ou "último vs
@@ -420,14 +434,14 @@ há dashboard sem persistência.
     severidade, tendência por fingerprint) desacopladas do schema; servem de
     contrato estável para o dashboard.
 
-### Épico PLAT2 — Dashboard de postura (depende de PLAT1)
+### Épico PLAT2 — Dashboard de postura (depende de PLAT1) `[EM DEV]`
 **Objetivo:** visualizar o histórico do findings store — tendência, diffs e
 severidade ao longo do tempo.
 **Valor:** leitura executiva e operacional da evolução da postura de segurança.
 **Dependência:** requer o findings store (PLAT1) pronto; **sem PLAT1 não há
 dashboard.**
 
-- **PLAT2.1 `[BACKLOG]` Visão de tendência e diff sobre o store**
+- **PLAT2.1 `[EM DEV]` Visão de tendência e diff sobre o store**
   - *Como* líder de segurança, *quero* ver evolução de findings por severidade e
     o diff entre scans, *para* acompanhar progresso.
   - **Critério de aceite:** consome a camada de consulta (PLAT1.4); mostra
@@ -438,28 +452,46 @@ dashboard.**
 
 ## Próximo sprint (priorizado)
 
-Foco do ciclo corrente — já em desenvolvimento:
+### Já entregue (no `main`, com testes)
 
-1. **R1.1** `recon.ct_subdomains` — primeiro módulo de recon (`PASSIVE`).
-2. **D1.1** `deps_secrets.secret_scan` — scanner de segredos (`PASSIVE`).
-3. **UX1.1** TUI em Textual — camada de usabilidade sobre o engine existente.
+Fechamos os dois primeiros ciclos de features e a base de plataforma:
 
-**Critério de pronto do sprint:** os três itens com testes, documentados no
-README/contrato de módulo, respeitando a fronteira ética e o scope gate.
+1. **R1.1** `recon.ct_subdomains` — subdomínios via Certificate Transparency
+   (`PASSIVE`). **Entregue.**
+2. **D1.1** `deps_secrets.secret_scan` — scanner de segredos por padrões
+   (`PASSIVE`). **Entregue.**
+3. **UX1.1** TUI em Textual — camada de usabilidade sobre o engine. **Entregue.**
+4. **V3.1** `vuln.nuclei` — wrapper do `nuclei` com parse estruturado
+   (`ACTIVE`, scope-gated). **Entregue.**
+5. **C3** Auditoria de postura **Supabase** (RLS, policies, chaves expostas,
+   buckets públicos) — `config_audit.supabase` (`PASSIVE`). **Entregue.**
+6. **R2.3** `recon.nmap` — port/service scan via `nmap`, primeiro módulo
+   `ACTIVE` "de verdade" exercitando o scope gate fim-a-fim. **Entregue.**
+7. **PLAT1** Findings store histórico (SQLite + dedup por fingerprint + diff
+   entre scans), exposto na CLI via `run --store` e `diff`. **Entregue.**
+8. **Plataforma/segurança:** validador de target compartilhado
+   (`thursec/core/target.py`), defesa contra *argument injection*, usado por
+   `recon.nmap` e `vuln.nuclei`. **Entregue.**
 
-### Próximo sprint priorizado (após as 3 features em andamento)
+### Em andamento
 
-Aprovado pelo usuário — o maior salto de valor para pentest/defesa real:
+- **PLAT2 — Dashboard de postura** (`[EM DEV]`): visualização do findings store
+  (tendência, diffs e distribuição por severidade). Construído agora sobre a
+  memória que o PLAT1 passou a fornecer.
 
-1. **V3.1** `vuln.nuclei` — wrapper do `nuclei` com parse estruturado em
-   `Finding`s (`ACTIVE`, scope-gated). Maior salto de valor para pentest.
-2. **C3** Auditoria de postura **Supabase/cloud** (RLS habilitado, policies,
-   chaves expostas, buckets públicos). Casa com a infra real da Raiô, que usa
-   Supabase.
-3. **R2.3** `recon` port/service scan via **`nmap`** — primeiro módulo `ACTIVE`
-   "de verdade", exercita o scope gate de ponta a ponta com binário externo.
+### Candidatos aos próximos sprints
 
-**Candidatos aos sprints seguintes:** PLAT1 (findings store histórico — base do
-dashboard), R1.2 (WHOIS/RDAP), D2.1 (parser de manifestos), C1.2 (cookies de
-sessão) — ampliam cobertura e memória do produto sem abrir novas frentes de
-risco.
+Ampliam cobertura sem abrir novas frentes de risco; sem datas definidas:
+
+- **P1** Teste de resiliência / carga da própria infra (versão legítima do
+  "DoS") — `INTRUSIVE`, scope-gated + confirmação + teto de RPS.
+- **P2** Simulação de conscientização interna (versão legítima do "phishing") —
+  só para funcionários próprios autorizados, sem coletar credencial real.
+- **R1.2** Consulta WHOIS / RDAP (`PASSIVE`) — contexto de registro do domínio.
+- **D2** Auditoria de dependências / CVEs — parser de manifestos (D2.1) +
+  cruzamento com advisories (D2.2), cobrindo risco de supply chain.
+- **C1.2** Checagem de cookies e políticas de sessão
+  (`Secure`/`HttpOnly`/`SameSite`).
+
+**Critério de pronto de cada item:** testes, documentação no README/contrato de
+módulo, respeitando a fronteira ética e o scope gate.
