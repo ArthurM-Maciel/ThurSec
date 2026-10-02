@@ -181,3 +181,31 @@ async def test_passes_target_and_extra_args():
     args = runner.calls[0]
     assert args[:3] == ["nuclei", "-u", "https://example.com"]
     assert args[-2:] == ["-tags", "cve"]
+
+
+# --- argument-injection hardening -----------------------------------------
+import pytest
+
+from thursec.core.context import RunContext
+from thursec.modules.vuln.nuclei import NucleiScan
+
+
+class _RecordingRunner:
+    """Fake runner that records whether it was ever called."""
+
+    def __init__(self):
+        self.calls = []
+
+    async def run(self, args, timeout=None, input_text=None):  # pragma: no cover
+        self.calls.append(args)
+        raise AssertionError("runner must not be called for an unsafe target")
+
+
+@pytest.mark.parametrize("bad", ["-config", "--list-templates", "-H", "", "  ", "a b"])
+async def test_nuclei_rejects_unsafe_target_without_invoking_binary(bad):
+    runner = _RecordingRunner()
+    ctx = RunContext(target=bad, runner=runner)
+    findings = await NucleiScan().run(ctx)
+    assert runner.calls == []  # binary never invoked
+    assert len(findings) == 1
+    assert "Refusing to scan" in findings[0].title
