@@ -1,0 +1,29 @@
+[project]
+name = "thursec"
+version = "0.1.0"
+description = "ThurSec — modular security assessment toolkit for authorized engagements."
+readme = "README.md"
+requires-python = ">=3.11"
+authors = [{ name = "Arthur Maciel" }]
+license = { text = "MIT" }
+dependencies = [
+    "PyYAML>=6.0",
+]
+
+[project.optional-dependencies]
+tui = ["textual>=0.60", "rich>=13.0"]
+dev = ["pytest>=8.0", "pytest-asyncio>=0.23"]
+
+[project.scripts]
+thursec = "thursec.cli:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["thursec"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]

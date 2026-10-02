@@ -1,0 +1,22 @@
+# Real scope files hold engagement/authorization data — never commit them.
+scope.yaml
+scope.*.yaml
+!scope.example.yaml
+
+# Reports may contain sensitive findings.
+/reports/
+*.report.json
+*.report.md
+*.report.html
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+dist/
+build/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/

@@ -1,0 +1,19 @@
+# ThurSec scope file — the authorization boundary for one engagement.
+#
+# Active modules refuse to run against any target not matched here. Fill this
+# in ONLY with assets you are authorized (in writing) to test, or that you own.
+#
+# Copy to scope.yaml and edit. scope.yaml is git-ignored by default.
+
+engagement: "Raiô Benefícios — internal security baseline"
+authorized_by: "arthur.maciel@raiobeneficios.com"
+expires: 2026-12-31
+
+targets:
+  # Exact hostnames
+  - "staging.internal.example"
+  # Wildcards (one label)
+  - "*.lab.example"
+  # IPs and CIDR ranges
+  - "10.0.0.5"
+  - "192.168.56.0/24"
