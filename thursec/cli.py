@@ -17,6 +17,7 @@ from .core.engine import Engine, Registry
 from .core.module import Category
 from .core.report import Report
 from .core.scope import Scope, ScopeError
+from .core.store import FindingStore, StoreError
 
 _BANNER = r"""
   _____ _                 ____
@@ -52,6 +53,19 @@ def _build_parser() -> argparse.ArgumentParser:
         "-o", "--output", type=Path,
         help="Write a report. Format inferred from extension (.json/.md/.html).",
     )
+    run.add_argument(
+        "--store", type=Path,
+        help="Persist this run to a historical SQLite findings store (opt-in).",
+    )
+
+    diff = sub.add_parser(
+        "diff", help="Diff the two most recent runs of a target in a store."
+    )
+    diff.add_argument(
+        "--store", type=Path, required=True,
+        help="Path to the SQLite findings store to read from.",
+    )
+    diff.add_argument("target", help="Target whose last two runs to compare.")
     return p
 
 
@@ -116,6 +130,15 @@ async def _cmd_run(registry: Registry, args: argparse.Namespace) -> int:
     if args.output:
         _write_report(report, args.output)
         print(f"Report written to {args.output}")
+
+    if args.store:
+        try:
+            store = FindingStore(args.store)
+            run_id = store.save_run(report.engagement, args.target, report.findings)
+            print(f"Run #{run_id} persisted to store {args.store}")
+        except StoreError as e:
+            print(f"store error: {e}", file=sys.stderr)
+            return 2
     return 0
 
 
@@ -131,6 +154,57 @@ def _write_report(report: Report, path: Path) -> None:
         raise SystemExit(f"Unknown report format: {ext!r} (use .json/.md/.html)")
 
 
+def _cmd_diff(args: argparse.Namespace) -> int:
+    try:
+        store = FindingStore(args.store)
+        result = store.diff_latest(args.target)
+    except StoreError as e:
+        print(f"store error: {e}", file=sys.stderr)
+        return 2
+
+    if result["run_b"] is None:
+        print(f"No runs found for {args.target!r} in {args.store}.")
+        return 0
+    if result["run_a"] is None:
+        print(
+            f"Only one run (#{result['run_b']}) for {args.target!r}; "
+            "need at least two to diff."
+        )
+        return 0
+
+    print(
+        f"Diff for {args.target} — run #{result['run_a']} (baseline) "
+        f"vs run #{result['run_b']} (latest)\n"
+    )
+
+    new = result["new"]
+    resolved = result["resolved"]
+    changed = result["changed_severity"]
+
+    print(f"  New ({len(new)}):")
+    for f in sorted(new, key=lambda x: -x["severity_level"]):
+        print(f"    + [{f['severity']}] {f['title']}  ({f['module']} / {f['target']})")
+    if not new:
+        print("    (none)")
+
+    print(f"\n  Resolved ({len(resolved)}):")
+    for f in sorted(resolved, key=lambda x: -x["severity_level"]):
+        print(f"    - [{f['severity']}] {f['title']}  ({f['module']} / {f['target']})")
+    if not resolved:
+        print("    (none)")
+
+    print(f"\n  Changed severity ({len(changed)}):")
+    for c in changed:
+        print(
+            f"    ~ {c['title']}  ({c['module']} / {c['target']}): "
+            f"{c['from']} -> {c['to']}"
+        )
+    if not changed:
+        print("    (none)")
+    print()
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     args = _build_parser().parse_args(argv)
     registry = Registry().discover()
@@ -140,6 +214,8 @@ def main(argv: list[str] | None = None) -> int:
         return _cmd_list(registry)
     if args.command == "run":
         return asyncio.run(_cmd_run(registry, args))
+    if args.command == "diff":
+        return _cmd_diff(args)
     return 1
 
 
