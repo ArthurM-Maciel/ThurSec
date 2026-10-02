@@ -27,6 +27,7 @@ from ...core.context import RunContext
 from ...core.finding import Finding, Severity
 from ...core.module import Category, Intensity, Module
 from ...core.runner import ToolNotFoundError
+from ...core.target import TargetError, validate_target
 
 # Default wall-clock budget for the whole scan. Overridable via
 # ctx.options["timeout"]. nuclei can run for a while on large template sets.
@@ -68,6 +69,31 @@ class NucleiScan(Module):
     async def run(self, ctx: RunContext) -> list[Finding]:
         timeout = float(ctx.options.get("timeout", _DEFAULT_TIMEOUT))
         allow_intrusive = bool(ctx.options.get("allow_intrusive", False))
+
+        # Defense against argument injection: a target shaped like a flag
+        # (e.g. "-config", "-H") would be consumed by nuclei as an option rather
+        # than a scan target. validate_target raises on anything that isn't a
+        # plausible host/URL (leading "-", whitespace, bad host), so we use it as
+        # a safety gate and never invoke the binary on bad input. We pass the
+        # ORIGINAL target to nuclei (not the normalized host) because nuclei
+        # scans full URLs — path and scheme are meaningful to web templates.
+        try:
+            validate_target(ctx.target)
+        except TargetError as e:
+            return [
+                ctx.finding(
+                    self.id,
+                    "Refusing to scan: unsafe or invalid target",
+                    Severity.LOW,
+                    description=(
+                        "The target was rejected before running nuclei because it "
+                        "is not a valid host/URL and could be interpreted as a "
+                        "command-line option."
+                    ),
+                    evidence=str(e),
+                    recommendation="Provide a plain hostname, IP, CIDR, or URL.",
+                )
+            ]
 
         args = ["nuclei", "-u", ctx.target, "-jsonl", "-silent"]
         if not allow_intrusive:

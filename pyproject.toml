@@ -12,7 +12,9 @@ dependencies = [
 
 [project.optional-dependencies]
 tui = ["textual>=0.60", "rich>=13.0"]
-dev = ["pytest>=8.0", "pytest-asyncio>=0.23"]
+# dev pulls in the tui extra so the full test suite (which imports the TUI)
+# collects and runs with a single `pip install -e ".[dev]"`.
+dev = ["thursec[tui]", "pytest>=8.0", "pytest-asyncio>=0.23"]
 
 [project.scripts]
 thursec = "thursec.cli:main"
