@@ -243,16 +243,20 @@ class FindingStore:
 
         Returns ``{"new", "resolved", "changed_severity"}``:
 
-        - ``new``: fingerprints present in B but not in A.
-        - ``resolved``: fingerprints present in A but not in B.
         - ``changed_severity``: same ``module+target+title`` present in both
           runs but with a different severity.
+        - ``new``: fingerprints present in B but not in A, *excluding* those
+          whose identity only changed severity (reported in ``changed_severity``).
+        - ``resolved``: fingerprints present in A but not in B, with the same
+          exclusion applied.
+
+        Because the fingerprint embeds the severity, a finding that merely
+        escalates/de-escalates gets a *different* fingerprint in each run. Left
+        unchecked it would surface in all three buckets at once; we classify it
+        as a severity change only, and keep it out of ``new``/``resolved``.
         """
         a = {f["fingerprint"]: f for f in self.get_findings(run_a_id)}
         b = {f["fingerprint"]: f for f in self.get_findings(run_b_id)}
-
-        new = [b[fp] for fp in b if fp not in a]
-        resolved = [a[fp] for fp in a if fp not in b]
 
         # Changed severity: match on the identity minus severity.
         def identity(f: dict[str, Any]) -> tuple[str, str, str]:
@@ -260,9 +264,11 @@ class FindingStore:
 
         a_by_identity = {identity(f): f for f in a.values()}
         changed_severity: list[dict[str, Any]] = []
+        changed_identities: set[tuple[str, str, str]] = set()
         for f in b.values():
             prev = a_by_identity.get(identity(f))
             if prev is not None and prev["severity_level"] != f["severity_level"]:
+                changed_identities.add(identity(f))
                 changed_severity.append(
                     {
                         "module": f["module"],
@@ -274,6 +280,19 @@ class FindingStore:
                         "to_level": f["severity_level"],
                     }
                 )
+
+        # A severity change is reported once (in changed_severity); keep both
+        # its old and new fingerprints out of new/resolved.
+        new = [
+            b[fp]
+            for fp in b
+            if fp not in a and identity(b[fp]) not in changed_identities
+        ]
+        resolved = [
+            a[fp]
+            for fp in a
+            if fp not in b and identity(a[fp]) not in changed_identities
+        ]
 
         return {"new": new, "resolved": resolved, "changed_severity": changed_severity}
 
