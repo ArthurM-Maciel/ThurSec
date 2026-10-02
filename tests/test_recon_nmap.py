@@ -5,6 +5,8 @@ to return a canned ``CommandResult`` carrying sample nmap XML (or a timeout /
 non-zero exit), so the tests are fast, deterministic and safe to run anywhere.
 """
 
+import pytest
+
 from thursec.core.context import RunContext
 from thursec.core.finding import Severity
 from thursec.core.module import Category, Intensity
@@ -231,6 +233,30 @@ async def test_run_tool_not_found_is_info(monkeypatch):
     assert findings[0].severity is Severity.INFO
     assert "not installed" in findings[0].title.lower()
     assert "install" in findings[0].recommendation.lower()
+
+
+# --- argument-injection defense --------------------------------------------
+@pytest.mark.parametrize(
+    "bad_target",
+    ["-sS", "--script=http-shellshock,exploit", "-oN/tmp/pwned", "", "bad target"],
+)
+async def test_run_refuses_unsafe_target_without_invoking_nmap(
+    monkeypatch, bad_target
+):
+    ctx = _ctx(target=bad_target)
+    fake = _patch_run(
+        monkeypatch,
+        ctx,
+        CommandResult(args=["nmap"], returncode=0, stdout=_XML_UP, stderr=""),
+    )
+
+    findings = await NmapScan().run(ctx)
+
+    # nmap must NEVER have been invoked for a dangerous/invalid target.
+    assert fake.calls == []
+    assert len(findings) == 1
+    assert findings[0].severity is Severity.LOW
+    assert "Refusing to scan" in findings[0].title
 
 
 # --- target normalization --------------------------------------------------

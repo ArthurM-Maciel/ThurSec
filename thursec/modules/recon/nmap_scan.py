@@ -28,6 +28,7 @@ from ...core.context import RunContext
 from ...core.finding import Finding, Severity
 from ...core.module import Category, Intensity, Module
 from ...core.runner import ToolNotFoundError
+from ...core.target import TargetError, validate_target
 
 # Sensible, non-intrusive defaults. All overridable via ``ctx.options``.
 _DEFAULT_TOP_PORTS = 1000
@@ -57,7 +58,31 @@ class NmapScan(Module):
     requires_tools = ("nmap",)
 
     async def run(self, ctx: RunContext) -> list[Finding]:
-        target = _normalize_target(ctx.target)
+        # Security gate: a target that looks like a flag (e.g. "-sS",
+        # "--script=exploit", "-oN/tmp/x") would be parsed as an nmap option and
+        # bypass the script allowlist. Validate BEFORE building the argv, and
+        # refuse (without ever invoking nmap) if it is unsafe/implausible.
+        try:
+            target = validate_target(ctx.target)
+        except TargetError as e:
+            return [
+                ctx.finding(
+                    self.id,
+                    "Refusing to scan: unsafe/invalid target",
+                    Severity.LOW,
+                    description=(
+                        "The target was rejected before running nmap because it "
+                        "is empty, malformed, or could be interpreted as a "
+                        "command-line flag (argument injection)."
+                    ),
+                    evidence=str(e),
+                    recommendation=(
+                        "Provide a bare hostname, IP address, CIDR network or URL."
+                    ),
+                    metadata={"target": ctx.target},
+                )
+            ]
+
         timeout = _as_float(ctx.options.get("timeout"), _DEFAULT_TIMEOUT)
         args = _build_args(target, ctx.options)
 
@@ -349,20 +374,6 @@ def _parse_xml(xml_text: str) -> list[_Host]:
 def _evidence_line(host: "_Host", port: "_Port") -> str:
     svc = " ".join(p for p in (port.service, port.product, port.version) if p)
     return f"{host.address}  {port.port}/{port.protocol}  {port.state}  {svc}".strip()
-
-
-def _normalize_target(target: str) -> str:
-    """Reduce a target (possibly a URL) to a bare host/IP for nmap."""
-    t = (target or "").strip()
-    if "://" in t:
-        from urllib.parse import urlparse
-
-        t = urlparse(t).hostname or t
-    # Strip any path or :port suffix (nmap takes ports via flags, not here).
-    t = t.split("/", 1)[0]
-    if t.count(":") == 1:  # host:port (not IPv6)
-        t = t.split(":", 1)[0]
-    return t.strip(".")
 
 
 def _as_int(value: object, default: int) -> int:
