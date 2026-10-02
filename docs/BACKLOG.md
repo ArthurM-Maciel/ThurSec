@@ -107,6 +107,18 @@ vuln e config.
   - **Critério de aceite:** `ACTIVE`; evidência = banner cru; não assume que o
     banner é confiável (apenas reporta).
 
+- **R2.3 `[PRÓXIMO]` Port/service scan via `nmap`**
+  - *Como* analista, *quero* rodar `nmap` contra um host em escopo e receber
+    portas/serviços como `Finding`s, *para* ter o primeiro módulo `ACTIVE` "de
+    verdade" que exercita o scope gate de ponta a ponta.
+  - **Critério de aceite:** `ACTIVE` → scope-gated (recusa alvo fora do
+    `scope.yaml`); `requires_tools = ("nmap",)` com pré-flight e dica de
+    instalação; invoca via `CommandRunner` (sem shell) com timeout; parse da
+    saída XML (`-oX`) para `Finding`s `INFO`/`LOW` por porta/serviço, com
+    produto/versão quando disponível na `evidence`; sem flags intrusivas por
+    padrão (sem `-sU`/scripts NSE disruptivos); primeiro caso que valida o scope
+    gate fim-a-fim com binário externo.
+
 ---
 
 ## Frente 2 — VULN (varredura de vulnerabilidades)
@@ -145,6 +157,30 @@ segurança operacional.
     escopo, *para* evitar disrupção acidental.
   - **Critério de aceite:** engine solicita confirmação para `INTRUSIVE`; sem
     confirmação, módulo é `skipped` com `skip_reason`; documentado no contrato.
+
+### Épico V3 — Wrapper do `nuclei` com parse estruturado `[PRÓXIMO]`
+**Objetivo:** integrar o scanner `nuclei` ao engine, convertendo seus resultados
+em `Finding`s do ThurSec, como primeiro grande salto de cobertura para pentest.
+**Valor:** o maior incremento de valor para pentest autorizado — milhares de
+templates da comunidade entram no toolkit com findings normalizados e reporte
+unificado, sem perder scope gate nem padronização.
+
+- **V3.1 `[PRÓXIMO]` Módulo `vuln.nuclei` (ACTIVE, scope-gated)**
+  - *Como* pentester, *quero* rodar o `nuclei` contra um alvo em escopo e receber
+    os achados como `Finding`s, *para* aproveitar os templates sem sair do fluxo.
+  - **Critério de aceite:** `ACTIVE` → scope-gated (recusa alvo fora do
+    `scope.yaml`); `requires_tools = ("nuclei",)` com pré-flight e dica de
+    instalação se ausente; invoca via `CommandRunner` (sem shell) com timeout;
+    saída JSON do nuclei parseada para `Finding`, mapeando a severidade do nuclei
+    para `Severity` e preservando a linha crua na `evidence`; `references` com o
+    link do template; nunca roda templates destrutivos por padrão.
+
+- **V3.2 `[BACKLOG]` Seleção de templates e perfis de intensidade**
+  - *Como* pentester, *quero* escolher tags/severidades de template e ter um
+    perfil "seguro" por padrão, *para* controlar ruído e risco.
+  - **Critério de aceite:** filtros expostos via `ctx.options`; perfil padrão
+    exclui categorias disruptivas; templates que alteram estado só sob
+    `INTRUSIVE` + confirmação.
 
 ---
 
@@ -221,6 +257,36 @@ segurança operacional.
   - **Critério de aceite:** `PASSIVE`; escopo restrito aos ativos próprios
     declarados; severidade por regra.
 
+### Épico C3 — Auditoria de postura Supabase / cloud `[PRÓXIMO]`
+**Objetivo:** auditar a configuração de segurança de projetos Supabase/cloud da
+*própria* organização (casa com a infra real da Raiô, que usa Supabase).
+**Valor:** detecta exposições de alto impacto — RLS desligado, policies
+permissivas, chaves vazadas, buckets públicos — direto no stack em produção,
+com achados acionáveis.
+
+- **C3.1 `[PRÓXIMO]` Checagem de RLS e policies**
+  - *Como* defensor, *quero* verificar se Row Level Security está habilitado nas
+    tabelas e se as policies não são permissivas demais, *para* evitar vazamento
+    de dados.
+  - **Critério de aceite:** `PASSIVE` sobre o projeto *próprio* (credencial de
+    auditoria fornecida pelo dono, nunca varredura de terceiros); `Finding`
+    `HIGH`/`CRITICAL` por tabela sem RLS ou com policy aberta; evidência com
+    nome da tabela/policy; recomendação acionável.
+
+- **C3.2 `[PRÓXIMO]` Chaves expostas e segredos de configuração**
+  - *Como* defensor, *quero* detectar uso indevido da `service_role`/chaves
+    sensíveis expostas no cliente, *para* cortar um vetor crítico.
+  - **Critério de aceite:** `PASSIVE`; `CRITICAL` para chave de serviço exposta;
+    reaproveita padrões do `deps_secrets.secret_scan` quando aplicável; nunca
+    loga o segredo completo além do necessário para verificação.
+
+- **C3.3 `[BACKLOG]` Buckets de storage públicos e exposição de dados**
+  - *Como* defensor, *quero* listar buckets/objetos com acesso público não
+    intencional, *para* fechar exposições de dados.
+  - **Critério de aceite:** `PASSIVE` sobre o projeto próprio; `Finding` por
+    bucket público com severidade conforme sensibilidade; opera apenas sobre
+    recursos declarados como próprios.
+
 ---
 
 ## Frente 5 — PLATAFORMA UNIFICADA (visão)
@@ -295,6 +361,79 @@ atacante.
     `pyproject.toml`; não quebra quando o extra não está instalado (mensagem
     clara).
 
+### Épico PLAT1 — Persistência central de findings (findings store histórico)
+
+**Objetivo:** dar ao ThurSec uma memória. Hoje cada run produz findings e um
+relatório efêmero; este épico introduz um **store histórico** (SQLite local no
+MVP) que guarda runs ao longo do tempo, deduplica por fingerprint e permite
+**diff entre scans**.
+
+**Valor:** transforma scans isolados em acompanhamento de postura: saber o que
+**surgiu, sumiu ou mudou de severidade** entre duas execuções é o que torna o
+produto útil de forma contínua (regressões, confirmação de correções, tendência)
+— e é a base de dados sobre a qual o dashboard futuro é construído.
+
+**Arquitetura (MVP):**
+- Backend **SQLite local** (um arquivo, zero dependências externas; cabe no
+  espírito pure-stdlib do projeto). Abstração de storage para permitir outros
+  backends depois sem mexer nos módulos.
+- Chave de deduplicação/identidade: `Finding.fingerprint` (já existe em
+  `thursec/core/finding.py` — `module|target|title|severity`, exclui timestamp e
+  evidência de propósito), garantindo que re-scan do mesmo problema não vire
+  "novo".
+- Cada execução vira um **run** (id, timestamp, escopo, módulos). Cada finding é
+  persistido ligado ao seu run; o histórico por fingerprint permite reconstruir a
+  linha do tempo de uma issue (primeira vez vista, última vez vista, status).
+- O engine ganha um passo opcional de persistência após coletar findings; sem o
+  store, o comportamento atual (relatório efêmero) permanece inalterado.
+
+**Pré-requisito do épico "Dashboard" (PLAT2):** o dashboard consome o store; não
+há dashboard sem persistência.
+
+- **PLAT1.1 `[BACKLOG]` Persistir runs e findings em SQLite**
+  - *Como* operador, *quero* que cada run e seus findings sejam gravados num
+    store local, *para* manter histórico entre execuções.
+  - **Critério de aceite:** schema de `runs` e `findings` em SQLite; grava run
+    (timestamp, alvo/escopo, módulos executados) e cada finding via `to_dict()`;
+    idempotente por `(run_id, fingerprint)`; store é opt-in (flag na CLI) e não
+    quebra o fluxo efêmero atual; coberto por testes.
+
+- **PLAT1.2 `[BACKLOG]` Deduplicação e histórico por fingerprint**
+  - *Como* operador, *quero* que o mesmo problema reaparecendo não gere registro
+    novo, *para* medir persistência de uma issue ao longo do tempo.
+  - **Critério de aceite:** dedup por `Finding.fingerprint`; registra
+    first_seen/last_seen por fingerprint; não cria duplicata ao re-scanear alvo
+    inalterado (verificado em teste).
+
+- **PLAT1.3 `[BACKLOG]` Diff entre dois scans**
+  - *Como* operador, *quero* comparar o run atual com um anterior, *para* ver o
+    que surgiu, sumiu ou mudou de severidade.
+  - **Critério de aceite:** comando/API que, dados dois run ids (ou "último vs
+    penúltimo"), retorna conjuntos **novos**, **resolvidos** e **alterados**
+    (mudança de severidade por fingerprint); saída exportável (JSON/MD/HTML
+    reaproveitando o reporter); coberto por testes com fixtures de dois runs.
+
+- **PLAT1.4 `[BACKLOG]` Camada de consulta para consumo externo**
+  - *Como* desenvolvedor do dashboard, *quero* uma API de leitura sobre o store,
+    *para* alimentar visualizações sem acoplar ao schema.
+  - **Critério de aceite:** funções de consulta (runs recentes, findings por
+    severidade, tendência por fingerprint) desacopladas do schema; servem de
+    contrato estável para o dashboard.
+
+### Épico PLAT2 — Dashboard de postura (depende de PLAT1)
+**Objetivo:** visualizar o histórico do findings store — tendência, diffs e
+severidade ao longo do tempo.
+**Valor:** leitura executiva e operacional da evolução da postura de segurança.
+**Dependência:** requer o findings store (PLAT1) pronto; **sem PLAT1 não há
+dashboard.**
+
+- **PLAT2.1 `[BACKLOG]` Visão de tendência e diff sobre o store**
+  - *Como* líder de segurança, *quero* ver evolução de findings por severidade e
+    o diff entre scans, *para* acompanhar progresso.
+  - **Critério de aceite:** consome a camada de consulta (PLAT1.4); mostra
+    tendência, novos/resolvidos e distribuição por severidade; não reimplementa
+    acesso ao schema.
+
 ---
 
 ## Próximo sprint (priorizado)
@@ -308,6 +447,19 @@ Foco do ciclo corrente — já em desenvolvimento:
 **Critério de pronto do sprint:** os três itens com testes, documentados no
 README/contrato de módulo, respeitando a fronteira ética e o scope gate.
 
-**Candidatos ao sprint seguinte:** R1.2 (WHOIS/RDAP), D2.1 (parser de
-manifestos), C1.2 (cookies de sessão) — todos `PASSIVE`/`ACTIVE` de baixo risco
-e alto valor, que ampliam cobertura sem abrir novas frentes de risco.
+### Próximo sprint priorizado (após as 3 features em andamento)
+
+Aprovado pelo usuário — o maior salto de valor para pentest/defesa real:
+
+1. **V3.1** `vuln.nuclei` — wrapper do `nuclei` com parse estruturado em
+   `Finding`s (`ACTIVE`, scope-gated). Maior salto de valor para pentest.
+2. **C3** Auditoria de postura **Supabase/cloud** (RLS habilitado, policies,
+   chaves expostas, buckets públicos). Casa com a infra real da Raiô, que usa
+   Supabase.
+3. **R2.3** `recon` port/service scan via **`nmap`** — primeiro módulo `ACTIVE`
+   "de verdade", exercita o scope gate de ponta a ponta com binário externo.
+
+**Candidatos aos sprints seguintes:** PLAT1 (findings store histórico — base do
+dashboard), R1.2 (WHOIS/RDAP), D2.1 (parser de manifestos), C1.2 (cookies de
+sessão) — ampliam cobertura e memória do produto sem abrir novas frentes de
+risco.
