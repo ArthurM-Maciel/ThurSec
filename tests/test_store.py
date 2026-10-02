@@ -102,11 +102,14 @@ def test_diff_detects_new_resolved_and_changed_severity(tmp_path):
 
     new_titles = {f["title"] for f in diff["new"]}
     resolved_titles = {f["title"] for f in diff["resolved"]}
-    # "appears" is new; "escalates" also counts as new because the fingerprint
-    # changed with its severity.
+    # "appears" is genuinely new; "goes away" is genuinely resolved.
     assert "appears" in new_titles
     assert "goes away" in resolved_titles
     assert "stays" not in new_titles and "stays" not in resolved_titles
+    # "escalates" only changed severity: it must NOT be double-counted as both
+    # new and resolved — it belongs solely to changed_severity.
+    assert "escalates" not in new_titles
+    assert "escalates" not in resolved_titles
 
     changed = diff["changed_severity"]
     assert len(changed) == 1
