@@ -9,8 +9,10 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import re
 import sys
 from pathlib import Path
+from typing import Any
 
 from . import __version__
 from .core.engine import Engine, Registry
@@ -56,6 +58,17 @@ def _build_parser() -> argparse.ArgumentParser:
             "Confirm up front that INTRUSIVE modules (which may alter or disrupt "
             "the target) are authorized. Without this flag an interactive run "
             "prompts for confirmation; a non-interactive run skips them."
+        ),
+    )
+    run.add_argument(
+        "-O", "--opt", action="append", default=[], metavar="KEY=VALUE",
+        dest="opt",
+        help=(
+            "Pass a module option as KEY=VALUE (repeatable; last wins for a "
+            "repeated key). Surfaced to modules as ctx.options. The value is "
+            "coerced: 'true'/'false' -> bool, an integer -> int, a decimal -> "
+            "float, otherwise a string. E.g. --opt max_rps=50 --opt "
+            "allow_intrusive=true --opt product=nginx."
         ),
     )
     run.add_argument(
@@ -171,6 +184,47 @@ def _select(registry: Registry, args: argparse.Namespace) -> list:
     return [m for m in registry.all() if not m.requires_scope]
 
 
+_INT_RE = re.compile(r"^-?\d+$")
+_FLOAT_RE = re.compile(r"^-?\d+\.\d+$")
+
+
+def _coerce(value: str) -> Any:
+    """Coerce a raw string option value to a bool/int/float/str, in that order.
+
+    Only the exact forms are coerced: ``true``/``false`` (case-insensitive) to
+    bool, ``^-?\\d+$`` to int, ``^-?\\d+\\.\\d+$`` to float; anything else is
+    left as the original string (so ``http://x?a=b`` stays a string).
+    """
+    low = value.lower()
+    if low == "true":
+        return True
+    if low == "false":
+        return False
+    if _INT_RE.match(value):
+        return int(value)
+    if _FLOAT_RE.match(value):
+        return float(value)
+    return value
+
+
+def _parse_opts(items: list[str]) -> dict[str, Any]:
+    """Parse ``KEY=VALUE`` strings into a dict, coercing each value.
+
+    The first ``=`` separates key from value, so the value may itself contain
+    ``=`` (e.g. ``url=http://x?a=b``). An item without any ``=`` is a usage
+    error. For a repeated key, the last occurrence wins.
+    """
+    out: dict[str, Any] = {}
+    for item in items:
+        if "=" not in item:
+            raise ValueError(
+                f"invalid --opt {item!r}: expected KEY=VALUE (missing '=')"
+            )
+        key, value = item.split("=", 1)
+        out[key] = _coerce(value)
+    return out
+
+
 def _resolve_intrusive_confirmation(
     modules: list, args: argparse.Namespace
 ) -> dict[str, object]:
@@ -224,6 +278,11 @@ async def _cmd_run(registry: Registry, args: argparse.Namespace) -> int:
 
     modules = _select(registry, args)
     options = _resolve_intrusive_confirmation(modules, args)
+    try:
+        options.update(_parse_opts(args.opt))
+    except ValueError as e:
+        print(f"error: {e}", file=sys.stderr)
+        return 2
     engine = Engine(registry, scope=scope, options=options)
     report = Report(engagement=scope.engagement if scope else "ad-hoc")
 
