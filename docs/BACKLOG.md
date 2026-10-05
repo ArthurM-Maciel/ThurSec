@@ -54,7 +54,14 @@ recusado no review, independentemente da qualidade técnica.
 - `[FEITO]` **Dashboard de postura** (`thursec/core/dashboard.py`, PLAT2) —
   render HTML de tendência/diff/severidade sobre o findings store, exposto pelo
   comando `dashboard` da CLI.
-- `[FEITO]` **10 módulos no `main`:**
+- `[FEITO]` **Dupla barreira `INTRUSIVE`** (`thursec/core/engine.py`, V2.1) —
+  módulos `INTRUSIVE` exigem scope gate **e** confirmação explícita do operador
+  (`--confirm-intrusive` na CLI, ou prompt em TTY); sem confirmação o módulo é
+  `skipped` com `skip_reason`. Habilitou a categoria `resilience`.
+- `[FEITO]` **Categoria `resilience`** (`Category.RESILIENCE` em
+  `thursec/core/module.py`) — frente das versões legítimas do "DoS" (teste de
+  carga/resiliência na própria infra), sempre `INTRUSIVE`.
+- `[FEITO]` **14 módulos no `main`:**
   - `recon.ct_subdomains` (`PASSIVE`) — subdomínios via Certificate Transparency.
   - `recon.dns` (`PASSIVE`) — resolução/enumeração DNS via DNS-over-HTTPS.
   - `recon.whois` (`PASSIVE`) — registro de domínio via RDAP/WHOIS.
@@ -62,10 +69,22 @@ recusado no review, independentemente da qualidade técnica.
   - `vuln.nuclei` (`ACTIVE`, scope-gated) — wrapper do `nuclei`.
   - `vuln.http_methods` (`ACTIVE`, scope-gated) — métodos HTTP perigosos e
     exposição de informação (read-only).
+  - `vuln.cve_lookup` (`PASSIVE`) — CVEs por produto/versão via API pública do NVD.
   - `deps_secrets.secret_scan` (`PASSIVE`) — scanner de segredos por padrões.
   - `deps_secrets.dep_audit` (`PASSIVE`) — auditoria de dependências via OSV.
   - `config_audit.supabase` (`PASSIVE`) — auditoria de postura Supabase.
   - `config_audit.tls_headers` (`ACTIVE`) — expiração de cert, TLS e headers HTTP.
+  - `config_audit.cookies` (`ACTIVE`, read-only) — flags `Secure`/`HttpOnly`/
+    `SameSite` e políticas de sessão.
+  - `config_audit.server_configs` (`PASSIVE`) — lint de configs locais nginx/sshd.
+  - `resilience.load_test` (`INTRUSIVE`, scope-gated + confirmação) — teste de
+    carga HTTP GET controlado da própria infra, com teto de RPS obrigatório +
+    teto rígido e kill-switch.
+- `[FEITO]` **Subsistema `awareness`** (`thursec/awareness/`) — conscientização
+  anti-phishing autorizada: páginas educativas + tokens de clique, com
+  allowlist de destinatários e registro de autorização obrigatórios; **sem
+  captura de credencial e sem envio**. Exposto pelo subcomando CLI `awareness`
+  (`awareness generate` / `awareness tally`).
 - `[FEITO]` **TUI em Textual** (UX1.1) — navegação de módulos e findings sobre o
   engine, respeitando o scope gate.
 - `[FEITO]` **Cobertura de testes** do núcleo (scope, findings, engine) e dos
@@ -75,10 +94,11 @@ recusado no review, independentemente da qualidade técnica.
 
 # ÉPICOS POR FRENTE
 
-As quatro frentes são as categorias do produto (`Category` em
-`thursec/core/module.py`): `recon`, `vuln`, `deps_secrets`, `config_audit`.
-A quinta seção é a visão de **plataforma unificada** — as versões legítimas das
-ideias vetadas acima.
+As frentes são as categorias do produto (`Category` em
+`thursec/core/module.py`): `recon`, `vuln`, `deps_secrets`, `config_audit` e
+`resilience` (versão legítima do "DoS", sempre `INTRUSIVE`). A seção de
+**plataforma unificada** é a visão das demais versões legítimas das ideias
+vetadas acima.
 
 ---
 
@@ -164,24 +184,30 @@ escopo autorizado.
   - **Critério de aceite:** `ACTIVE`; reaproveita infra do `tls_headers`;
     findings com referência a padrão (ex.: recomendações TLS 1.2+).
 
-- **V1.3 `[EM DEV]` Verificação de CVEs por produto/versão identificado**
+- **V1.3 `[FEITO]` Verificação de CVEs por produto/versão identificado**
   (`vuln.cve_lookup`)
   - *Como* analista, *quero* cruzar o fingerprint de serviço (R2.2) com uma base
     de CVEs, *para* apontar vulnerabilidades conhecidas.
-  - **Critério de aceite:** `PASSIVE` (consulta base externa, não o alvo); marca
-    confiança da correlação; nunca afirma exploração, só exposição potencial.
+  - **Critério de aceite:** `PASSIVE` (consulta a API pública do NVD, não o
+    alvo); marca confiança da correlação; nunca afirma exploração, só exposição
+    potencial.
 
-### Épico V2 — Checks `INTRUSIVE` com confirmação
+### Épico V2 — Checks `INTRUSIVE` com confirmação `[FEITO]`
 **Objetivo:** permitir verificações que podem alterar estado, com dupla
 barreira (scope gate + confirmação explícita).
 **Valor:** cobre casos que exigem interação mais forte sem abrir mão da
-segurança operacional.
+segurança operacional. É o pré-requisito que destravou o épico P1 (resiliência).
 
-- **V2.1 `[BACKLOG]` Protótipo de check `INTRUSIVE` + fluxo de confirmação**
+- **V2.1 `[FEITO]` Primitiva de check `INTRUSIVE` + fluxo de confirmação**
+  (`thursec/core/engine.py`)
   - *Como* analista, *quero* que módulos `INTRUSIVE` exijam confirmação além do
     escopo, *para* evitar disrupção acidental.
-  - **Critério de aceite:** engine solicita confirmação para `INTRUSIVE`; sem
-    confirmação, módulo é `skipped` com `skip_reason`; documentado no contrato.
+  - **Critério de aceite:** dupla barreira no engine — além do scope gate, um
+    módulo `INTRUSIVE` só roda quando `options["confirm_intrusive"] is True`
+    (setado pela CLI via `--confirm-intrusive` ou prompt interativo em TTY); sem
+    confirmação o módulo é `skipped` com `skip_reason` explicativo (nenhuma ação
+    é executada); comportamento documentado no contrato e coberto por testes.
+    Introduziu a categoria `Category.RESILIENCE`.
 
 ### Épico V3 — Wrapper do `nuclei` com parse estruturado `[FEITO]`
 **Objetivo:** integrar o scanner `nuclei` ao engine, convertendo seus resultados
@@ -276,17 +302,18 @@ unificado, sem perder scope gate nem padronização.
   - **Critério de aceite:** `ACTIVE`, scope-gated; pure-stdlib; findings por
     header ausente com recomendação. **Entregue.**
 
-- **C1.2 `[EM DEV]` Checagem de cookies e políticas de sessão**
+- **C1.2 `[FEITO]` Checagem de cookies e políticas de sessão**
   (`config_audit.cookies`)
   - *Como* defensor, *quero* validar flags `Secure`/`HttpOnly`/`SameSite`,
     *para* reduzir risco de sequestro de sessão.
-  - **Critério de aceite:** `ACTIVE`; findings `LOW`/`MEDIUM` por flag ausente.
+  - **Critério de aceite:** `ACTIVE`, read-only (nenhuma requisição que altere
+    estado); findings `LOW`/`MEDIUM` por flag ausente, com recomendação.
 
 ### Épico C2 — Auditoria de configuração de infraestrutura
 **Objetivo:** checar configs de arquivos/infra da própria organização.
 **Valor:** estende a auditoria para além do perímetro web.
 
-- **C2.1 `[EM DEV]` Lint de arquivos de configuração (ex.: nginx, SSH)**
+- **C2.1 `[FEITO]` Lint de arquivos de configuração (nginx / sshd)**
   (`config_audit.server_configs`)
   - *Como* defensor, *quero* detectar diretivas inseguras em configs locais,
     *para* endurecer servidores.
@@ -337,23 +364,28 @@ As versões **legítimas** das categorias vetadas. Cada uma reinterpreta a ideia
 para o uso defensivo/autorizado do produto. Todas respeitam o scope gate e, nos
 casos sensíveis, exigem inventário/autorização declarados.
 
-### Épico P1 — Teste de resiliência / carga da própria infra (legítima do "DoS")
+### Épico P1 — Teste de resiliência / carga da própria infra (legítima do "DoS") `[FEITO]`
 **Objetivo:** medir como a *própria* infra se comporta sob carga, com orçamento
 de erro definido — não derrubar, mas conhecer o limite.
 **Valor:** capacity planning e validação de SLOs sem risco a terceiros.
-**Pré-requisito:** depende da **primitiva de confirmação `INTRUSIVE` (V2.1)** —
-sem o fluxo de confirmação + scope gate em dupla barreira, este épico não começa.
-**Exige design antes:** modelo de orçamento de erro, teto de RPS e kill-switch
-precisam de desenho e revisão de produto/segurança antes de qualquer código.
+**Pré-requisito:** dependia da **primitiva de confirmação `INTRUSIVE` (V2.1)** —
+entregue; o módulo roda sob o scope gate + confirmação em dupla barreira.
 
-- **P1.1 `[BACKLOG]` Teste de carga com teto de requisições e kill-switch**
+- **P1.1 `[FEITO]` Teste de carga com teto de requisições e kill-switch**
+  (`resilience.load_test`)
   - *Como* SRE, *quero* gerar carga controlada contra meu serviço em escopo,
     *para* medir latência/erro sob pressão.
-  - **Critério de aceite:** `INTRUSIVE` → scope-gated + confirmação (V2.1); teto
-    de RPS obrigatório; parada automática ao atingir limiar de erro; relatório de
-    latência. **Recusa qualquer alvo não listado no `scope.yaml`.**
+  - **Critério de aceite:** `INTRUSIVE` → scope-gated + confirmação (V2.1);
+    **teto de RPS obrigatório** (`options["max_rps"]`; sem ele nenhum tráfego é
+    gerado) com **teto rígido não-removível de 200 req/s** (requisições acima são
+    recusadas), além de teto rígido de duração; **kill-switch automático** que
+    aborta o teste ao ultrapassar o limiar de erro (5xx + falhas de conexão) na
+    janela recente; **somente GET** idempotente (não altera estado do alvo);
+    alvo passa pelo `validate_target`; relatório de latência/erro. **Recusa
+    qualquer alvo não listado no `scope.yaml`.** Coberto por testes sem gerar
+    tráfego real.
 
-### Épico P2 — Simulação de conscientização (legítima do "phishing")
+### Épico P2 — Simulação de conscientização (legítima do "phishing") `[FEITO]`
 **Objetivo:** treinar os *próprios* funcionários a reconhecer golpes, com
 autorização e sem coletar credenciais reais.
 **Valor:** reduz o maior vetor humano de risco, de forma ética e mensurável.
@@ -368,13 +400,18 @@ recusado — é exatamente a fronteira que separa esta simulação do phishing v
 **Exige design antes:** fluxo de consentimento, anonimização de métricas e trilha
 de autorização precisam ser desenhados e aprovados antes de implementar.
 
-- **P2.1 `[BACKLOG]` Campanha de simulação interna com consentimento**
-  - *Como* time de segurança, *quero* enviar simulações só para funcionários da
+- **P2.1 `[FEITO]` Campanha de simulação interna com consentimento**
+  (`thursec/awareness/`, subcomando CLI `awareness`)
+  - *Como* time de segurança, *quero* gerar simulações só para funcionários da
     minha org (lista autorizada), *para* medir e treinar reação.
-  - **Critério de aceite:** destinatários restritos a domínio/lista autorizada;
-    **nunca** captura senha real (página educativa, não coletora); **sem envio
-    enganoso em massa**; registro de autorização obrigatório; métrica = apenas
-    clique em lista interna autorizada; métricas agregadas, não punitivas.
+  - **Critério de aceite:** destinatários restritos a uma **allowlist**
+    autorizada (qualquer destinatário fora dela aborta a geração); **registro de
+    autorização obrigatório** (`authorized_by` + `authorized_on`); **nunca**
+    captura senha real — a página renderizada é puramente educativa (sem form de
+    login, sem campo de senha, sem POST de segredo); **sem envio** — o subsistema
+    não tem SMTP nem função de disparo (só renderiza template de texto);
+    métrica = apenas tokens de clique, agregada e **não punitiva** (sem score
+    por pessoa). Exposto via CLI `awareness generate` / `awareness tally`.
 
 ### Épico P3 — Agente de endpoint da própria frota (legítima do "RAT")
 **Objetivo:** visibilidade de postura dos endpoints que a organização
@@ -477,21 +514,21 @@ há dashboard sem persistência.
     severidade, tendência por fingerprint) desacopladas do schema; servem de
     contrato estável para o dashboard.
 
-### Épico PLAT2 — Dashboard de postura (depende de PLAT1) `[EM DEV]`
+### Épico PLAT2 — Dashboard de postura (depende de PLAT1) `[FEITO]`
 **Objetivo:** visualizar o histórico do findings store — tendência, diffs e
 severidade ao longo do tempo.
 **Valor:** leitura executiva e operacional da evolução da postura de segurança.
 **Dependência:** requer o findings store (PLAT1) pronto; **sem PLAT1 não há
 dashboard.**
 
-- **PLAT2.1 `[EM DEV]` Visão de tendência e diff sobre o store**
+- **PLAT2.1 `[FEITO]` Visão de tendência e diff sobre o store**
   - *Como* líder de segurança, *quero* ver evolução de findings por severidade e
     o diff entre scans, *para* acompanhar progresso.
   - **Critério de aceite:** consome a camada de consulta (PLAT1.4); mostra
     tendência, novos/resolvidos e distribuição por severidade; não reimplementa
     acesso ao schema.
 
-### Épico PLAT3 — Empacotamento / Distribuição e CI `[EM DEV]`
+### Épico PLAT3 — Empacotamento / Distribuição e CI `[FEITO]`
 **Objetivo:** tornar o ThurSec instalável, reproduzível e testado de forma
 contínua — fechar o ciclo de engenharia que falta para uma primeira release
 pública.
@@ -499,20 +536,20 @@ pública.
 a fronteira ética e o scope gate contra regressões (testes em cada PR) e dá uma
 versão citável para quem consome o toolkit.
 
-- **PLAT3.1 `[EM DEV]` Imagem Docker do toolkit**
+- **PLAT3.1 `[FEITO]` Imagem Docker do toolkit**
   - *Como* operador, *quero* uma imagem container com o ThurSec e suas deps
     (incl. binários externos opcionais como `nmap`/`nuclei`), *para* rodar sem
     montar o ambiente na mão.
   - **Critério de aceite:** `Dockerfile` reproduzível; imagem roda a CLI por
     padrão; extras (`[tui]`) documentados; não embute segredos nem `scope.yaml`.
 
-- **PLAT3.2 `[EM DEV]` CI no GitHub Actions rodando os testes**
+- **PLAT3.2 `[FEITO]` CI no GitHub Actions rodando os testes**
   - *Como* mantenedor, *quero* que cada PR rode a suíte de testes automaticamente,
     *para* proteger o núcleo, o scope gate e a fronteira ética contra regressão.
   - **Critério de aceite:** workflow do GitHub Actions executa os testes em push
     e PR; falha bloqueia o merge; matriz mínima de versões de Python suportadas.
 
-- **PLAT3.3 `[EM DEV]` Release 0.1.0 + CHANGELOG**
+- **PLAT3.3 `[FEITO]` Release 0.1.0 + CHANGELOG**
   - *Como* usuário, *quero* uma versão marcada e um CHANGELOG, *para* saber o que
     entrou e instalar um ponto estável.
   - **Critério de aceite:** `CHANGELOG.md` seguindo Keep a Changelog; versão
@@ -552,38 +589,43 @@ Fechamos os dois primeiros ciclos de features e a base de plataforma:
 12. **D2.1/D2.2** `deps_secrets.dep_audit` — auditoria de dependências via OSV
     (`PASSIVE`). **Entregue.**
 
-Total: **10 módulos** no `main` + núcleo + CLI (`list`/`run`/`diff`/`dashboard`)
-+ findings store + TUI.
+Além desses 12 módulos, entraram depois: **V1.3** `vuln.cve_lookup`, **C1.2**
+`config_audit.cookies`, **C2.1** `config_audit.server_configs` e **P1.1**
+`resilience.load_test`.
 
-### Em andamento
+Total: **14 módulos** no `main` + núcleo + CLI (`list`/`run`/`diff`/`dashboard`
++ subcomando `awareness`) + findings store + dashboard + TUI + dupla barreira
+`INTRUSIVE` + subsistema `awareness`.
 
-- **PLAT2 — Dashboard de postura** (`[EM DEV]`): visualização do findings store
-  (tendência, diffs e distribuição por severidade). Construído agora sobre a
-  memória que o PLAT1 passou a fornecer.
-- **C1.2** `config_audit.cookies` (`[EM DEV]`) — flags `Secure`/`HttpOnly`/
-  `SameSite` e políticas de sessão.
-- **V1.3** `vuln.cve_lookup` (`[EM DEV]`) — CVEs por fingerprint de serviço
-  (`PASSIVE`).
-- **C2.1** `config_audit.server_configs` (`[EM DEV]`) — lint de configs locais
-  (nginx/SSH).
-- **PLAT3 — Empacotamento / Distribuição e CI** (`[EM DEV]`): Docker, GitHub
-  Actions rodando os testes e release `0.1.0` + CHANGELOG.
+### Entregue nos ciclos recentes
+
+- **V2.1** Primitiva de check `INTRUSIVE` + fluxo de confirmação (dupla barreira
+  no engine) — pré-requisito do P1. **Entregue.**
+- **P1.1** `resilience.load_test` (`INTRUSIVE`) — teste de carga da própria infra
+  com teto de RPS obrigatório + teto rígido (200), kill-switch e GET-only.
+  **Entregue.**
+- **P2.1** Subsistema `awareness` + subcomando CLI — conscientização
+  anti-phishing autorizada (allowlist + autorização obrigatórias, sem captura de
+  credencial, sem envio). **Entregue.**
+- **PLAT2 — Dashboard de postura**: visualização do findings store (tendência,
+  diffs e distribuição por severidade). **Entregue.**
+- **PLAT3 — Empacotamento / Distribuição e CI**: Docker, GitHub Actions rodando
+  os testes e release `0.1.0` + CHANGELOG. **Entregue.**
+- **V1.3** `vuln.cve_lookup` (`PASSIVE`) — CVEs por produto/versão via NVD.
+  **Entregue.**
+- **C1.2** `config_audit.cookies` (`ACTIVE`, read-only) — flags `Secure`/
+  `HttpOnly`/`SameSite`. **Entregue.**
+- **C2.1** `config_audit.server_configs` (`PASSIVE`) — lint de configs locais
+  nginx/sshd. **Entregue.**
 
 ### Candidatos aos próximos sprints
 
 Ampliam cobertura sem abrir novas frentes de risco; sem datas definidas:
 
-- **P1** Teste de resiliência / carga da própria infra (versão legítima do
-  "DoS") — `INTRUSIVE`, scope-gated + confirmação (V2.1) + teto de RPS;
-  **exige design antes**.
-- **P2** Simulação de conscientização interna (versão legítima do "phishing") —
-  página educativa + métrica de clique em lista interna autorizada, **sem
-  captura de credencial e sem envio enganoso em massa**, com registro de
-  autorização obrigatório; **exige design antes**.
 - **D2.3** Parsear vetor CVSS do OSV para score numérico — hoje `dep_audit` cai
   no default `HIGH` quando o OSV entrega o CVSS como vetor.
-- **V2.1** Primitiva de check `INTRUSIVE` + fluxo de confirmação (pré-requisito
-  do P1).
+- **R2.1/R2.2** Port scan asyncio e banner grabbing / fingerprint de serviço.
+- **V3.2** Seleção de templates e perfis de intensidade no `vuln.nuclei`.
 
 **Critério de pronto de cada item:** testes, documentação no README/contrato de
 módulo, respeitando a fronteira ética e o scope gate.
