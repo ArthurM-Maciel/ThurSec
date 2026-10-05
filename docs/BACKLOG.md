@@ -44,17 +44,26 @@ recusado no review, independentemente da qualidade técnica.
   `RunContext`, relatórios JSON/Markdown/HTML.
 - `[FEITO]` **CLI** (`thursec/cli.py`): `list`, `run` (por `-m` módulo, `-c`
   categoria, ou passivo por padrão), saída `-o`; persistência opt-in com
-  `run --store` e comando `diff` entre runs (PLAT1).
+  `run --store`, comando `diff` entre runs (PLAT1) e comando `dashboard`
+  (HTML de postura sobre o store, PLAT2).
 - `[FEITO]` **Validador de target compartilhado** (`thursec/core/target.py`) —
   defesa contra *argument injection* em alvos passados a binários externos;
   usado por `recon.nmap` e `vuln.nuclei`.
 - `[FEITO]` **Findings store histórico** (`thursec/core/store.py`, PLAT1) —
   SQLite local, dedup por fingerprint (first_seen/last_seen) e diff entre scans.
-- `[FEITO]` **6 módulos no `main`:**
+- `[FEITO]` **Dashboard de postura** (`thursec/core/dashboard.py`, PLAT2) —
+  render HTML de tendência/diff/severidade sobre o findings store, exposto pelo
+  comando `dashboard` da CLI.
+- `[FEITO]` **10 módulos no `main`:**
   - `recon.ct_subdomains` (`PASSIVE`) — subdomínios via Certificate Transparency.
+  - `recon.dns` (`PASSIVE`) — resolução/enumeração DNS via DNS-over-HTTPS.
+  - `recon.whois` (`PASSIVE`) — registro de domínio via RDAP/WHOIS.
   - `recon.nmap` (`ACTIVE`, scope-gated) — port/service scan via `nmap`.
   - `vuln.nuclei` (`ACTIVE`, scope-gated) — wrapper do `nuclei`.
+  - `vuln.http_methods` (`ACTIVE`, scope-gated) — métodos HTTP perigosos e
+    exposição de informação (read-only).
   - `deps_secrets.secret_scan` (`PASSIVE`) — scanner de segredos por padrões.
+  - `deps_secrets.dep_audit` (`PASSIVE`) — auditoria de dependências via OSV.
   - `config_audit.supabase` (`PASSIVE`) — auditoria de postura Supabase.
   - `config_audit.tls_headers` (`ACTIVE`) — expiração de cert, TLS e headers HTTP.
 - `[FEITO]` **TUI em Textual** (UX1.1) — navegação de módulos e findings sobre o
@@ -90,13 +99,13 @@ assessment, e seguro de rodar por ser passivo.
     respeita timeout do runner; deduplica resultados; funciona offline-safe
     (falha de rede vira erro tratado, não exceção).
 
-- **R1.2 `[BACKLOG]` Consulta WHOIS / RDAP**
+- **R1.2 `[FEITO]` Consulta WHOIS / RDAP** (`recon.whois`)
   - *Como* analista, *quero* dados de registro do domínio (registrante, datas,
     nameservers), *para* contextualizar o alvo.
   - **Critério de aceite:** `PASSIVE`; parse de RDAP com fallback; findings
     `INFO` com evidência bruta preservada.
 
-- **R1.3 `[BACKLOG]` Resolução DNS e enumeração de registros**
+- **R1.3 `[FEITO]` Resolução DNS e enumeração de registros** (`recon.dns`)
   - *Como* analista, *quero* registros A/AAAA/MX/TXT/CNAME do alvo, *para*
     entender a topologia.
   - **Critério de aceite:** marcado `PASSIVE` (consulta a resolvers públicos,
@@ -142,7 +151,8 @@ vuln e config.
 **Valor:** encontra problemas exploráveis antes de um atacante, dentro de um
 escopo autorizado.
 
-- **V1.1 `[BACKLOG]` Métodos HTTP perigosos e exposição de informação**
+- **V1.1 `[FEITO]` Métodos HTTP perigosos e exposição de informação**
+  (`vuln.http_methods`)
   - *Como* analista, *quero* detectar métodos como `TRACE`/`PUT` habilitados e
     vazamento de versão em headers/erros, *para* reportar hardening.
   - **Critério de aceite:** `ACTIVE`; nenhuma requisição que altere estado;
@@ -154,7 +164,8 @@ escopo autorizado.
   - **Critério de aceite:** `ACTIVE`; reaproveita infra do `tls_headers`;
     findings com referência a padrão (ex.: recomendações TLS 1.2+).
 
-- **V1.3 `[BACKLOG]` Verificação de CVEs por produto/versão identificado**
+- **V1.3 `[EM DEV]` Verificação de CVEs por produto/versão identificado**
+  (`vuln.cve_lookup`)
   - *Como* analista, *quero* cruzar o fingerprint de serviço (R2.2) com uma base
     de CVEs, *para* apontar vulnerabilidades conhecidas.
   - **Critério de aceite:** `PASSIVE` (consulta base externa, não o alvo); marca
@@ -224,17 +235,32 @@ unificado, sem perder scope gate nem padronização.
 **Objetivo:** identificar dependências com vulnerabilidades conhecidas.
 **Valor:** cobre o risco de supply chain nos projetos da própria organização.
 
-- **D2.1 `[BACKLOG]` Parser de manifestos (requirements/pyproject/lock)**
+- **D2.1 `[FEITO]` Parser de manifestos (requirements/pyproject/lock)**
+  (`deps_secrets.dep_audit`)
   - *Como* desenvolvedor, *quero* extrair o grafo de dependências e versões,
     *para* ter a base da auditoria.
   - **Critério de aceite:** `PASSIVE`; suporta pelo menos Python; findings `INFO`
     com inventário; tolerante a formatos parciais.
 
-- **D2.2 `[BACKLOG]` Cruzamento com base de advisories**
+- **D2.2 `[FEITO]` Cruzamento com base de advisories** (`deps_secrets.dep_audit`,
+  via OSV)
   - *Como* desenvolvedor, *quero* saber quais dependências têm CVE/advisory,
     *para* priorizar upgrades.
   - **Critério de aceite:** `PASSIVE`; severidade herda do advisory; recomendação
     = versão corrigida; modo offline com base em cache.
+
+- **D2.3 `[BACKLOG]` Parsear vetor CVSS do OSV para score numérico**
+  - *Como* desenvolvedor, *quero* que a severidade derive do score real quando o
+    OSV entrega o CVSS como **vetor** (`CVSS:3.1/AV:.../...`) e não como número,
+    *para* não colapsar advisories distintos no mesmo nível.
+  - **Contexto:** hoje `deps_secrets.dep_audit` (`_cvss_score` em
+    `thursec/modules/deps_secrets/dep_audit.py`) só lê `score` numérico; quando o
+    OSV devolve um vetor CVSS, o valor é ignorado e o módulo cai no **default
+    `HIGH`** conservador. Follow-up: parsear o vetor (base score CVSS v3.x) e
+    mapear para `Severity` por faixa, mantendo o `HIGH` só como fallback real.
+  - **Critério de aceite:** `PASSIVE`; deriva base score a partir do vetor CVSS
+    v3.x; mapeia faixa → `Severity`; `HIGH` deixa de ser default quando o vetor
+    está presente; coberto por teste com advisory de vetor.
 
 ---
 
@@ -250,7 +276,8 @@ unificado, sem perder scope gate nem padronização.
   - **Critério de aceite:** `ACTIVE`, scope-gated; pure-stdlib; findings por
     header ausente com recomendação. **Entregue.**
 
-- **C1.2 `[BACKLOG]` Checagem de cookies e políticas de sessão**
+- **C1.2 `[EM DEV]` Checagem de cookies e políticas de sessão**
+  (`config_audit.cookies`)
   - *Como* defensor, *quero* validar flags `Secure`/`HttpOnly`/`SameSite`,
     *para* reduzir risco de sequestro de sessão.
   - **Critério de aceite:** `ACTIVE`; findings `LOW`/`MEDIUM` por flag ausente.
@@ -259,7 +286,8 @@ unificado, sem perder scope gate nem padronização.
 **Objetivo:** checar configs de arquivos/infra da própria organização.
 **Valor:** estende a auditoria para além do perímetro web.
 
-- **C2.1 `[BACKLOG]` Lint de arquivos de configuração (ex.: nginx, SSH)**
+- **C2.1 `[EM DEV]` Lint de arquivos de configuração (ex.: nginx, SSH)**
+  (`config_audit.server_configs`)
   - *Como* defensor, *quero* detectar diretivas inseguras em configs locais,
     *para* endurecer servidores.
   - **Critério de aceite:** `PASSIVE` (lê arquivo local); regras documentadas;
@@ -313,12 +341,16 @@ casos sensíveis, exigem inventário/autorização declarados.
 **Objetivo:** medir como a *própria* infra se comporta sob carga, com orçamento
 de erro definido — não derrubar, mas conhecer o limite.
 **Valor:** capacity planning e validação de SLOs sem risco a terceiros.
+**Pré-requisito:** depende da **primitiva de confirmação `INTRUSIVE` (V2.1)** —
+sem o fluxo de confirmação + scope gate em dupla barreira, este épico não começa.
+**Exige design antes:** modelo de orçamento de erro, teto de RPS e kill-switch
+precisam de desenho e revisão de produto/segurança antes de qualquer código.
 
 - **P1.1 `[BACKLOG]` Teste de carga com teto de requisições e kill-switch**
   - *Como* SRE, *quero* gerar carga controlada contra meu serviço em escopo,
     *para* medir latência/erro sob pressão.
-  - **Critério de aceite:** `INTRUSIVE` → scope-gated + confirmação; teto de RPS
-    obrigatório; parada automática ao atingir limiar de erro; relatório de
+  - **Critério de aceite:** `INTRUSIVE` → scope-gated + confirmação (V2.1); teto
+    de RPS obrigatório; parada automática ao atingir limiar de erro; relatório de
     latência. **Recusa qualquer alvo não listado no `scope.yaml`.**
 
 ### Épico P2 — Simulação de conscientização (legítima do "phishing")
@@ -326,12 +358,23 @@ de erro definido — não derrubar, mas conhecer o limite.
 autorização e sem coletar credenciais reais.
 **Valor:** reduz o maior vetor humano de risco, de forma ética e mensurável.
 
+**Borda do produto (inegociável):** o escopo legítimo é **página educativa +
+métrica de clique** sobre uma **lista interna autorizada** de funcionários da
+*própria* organização. **Sem captura de credencial** (a página ensina, nunca
+coleta senha) e **sem envio enganoso em massa** (nada de varrer ou iludir
+terceiros). **Registro de autorização é obrigatório** antes de qualquer disparo.
+Qualquer desenho que resvale em roubo de credencial ou engano em massa é
+recusado — é exatamente a fronteira que separa esta simulação do phishing vetado.
+**Exige design antes:** fluxo de consentimento, anonimização de métricas e trilha
+de autorização precisam ser desenhados e aprovados antes de implementar.
+
 - **P2.1 `[BACKLOG]` Campanha de simulação interna com consentimento**
   - *Como* time de segurança, *quero* enviar simulações só para funcionários da
     minha org (lista autorizada), *para* medir e treinar reação.
-  - **Critério de aceite:** destinatários restritos a domínio/ lista autorizada;
-    **nunca** captura senha real (página educativa, não coletora); registro de
-    autorização obrigatório; métricas agregadas, não punitivas.
+  - **Critério de aceite:** destinatários restritos a domínio/lista autorizada;
+    **nunca** captura senha real (página educativa, não coletora); **sem envio
+    enganoso em massa**; registro de autorização obrigatório; métrica = apenas
+    clique em lista interna autorizada; métricas agregadas, não punitivas.
 
 ### Épico P3 — Agente de endpoint da própria frota (legítima do "RAT")
 **Objetivo:** visibilidade de postura dos endpoints que a organização
@@ -448,6 +491,34 @@ dashboard.**
     tendência, novos/resolvidos e distribuição por severidade; não reimplementa
     acesso ao schema.
 
+### Épico PLAT3 — Empacotamento / Distribuição e CI `[EM DEV]`
+**Objetivo:** tornar o ThurSec instalável, reproduzível e testado de forma
+contínua — fechar o ciclo de engenharia que falta para uma primeira release
+pública.
+**Valor:** reduz o atrito de adoção (rodar sem montar ambiente na mão), protege
+a fronteira ética e o scope gate contra regressões (testes em cada PR) e dá uma
+versão citável para quem consome o toolkit.
+
+- **PLAT3.1 `[EM DEV]` Imagem Docker do toolkit**
+  - *Como* operador, *quero* uma imagem container com o ThurSec e suas deps
+    (incl. binários externos opcionais como `nmap`/`nuclei`), *para* rodar sem
+    montar o ambiente na mão.
+  - **Critério de aceite:** `Dockerfile` reproduzível; imagem roda a CLI por
+    padrão; extras (`[tui]`) documentados; não embute segredos nem `scope.yaml`.
+
+- **PLAT3.2 `[EM DEV]` CI no GitHub Actions rodando os testes**
+  - *Como* mantenedor, *quero* que cada PR rode a suíte de testes automaticamente,
+    *para* proteger o núcleo, o scope gate e a fronteira ética contra regressão.
+  - **Critério de aceite:** workflow do GitHub Actions executa os testes em push
+    e PR; falha bloqueia o merge; matriz mínima de versões de Python suportadas.
+
+- **PLAT3.3 `[EM DEV]` Release 0.1.0 + CHANGELOG**
+  - *Como* usuário, *quero* uma versão marcada e um CHANGELOG, *para* saber o que
+    entrou e instalar um ponto estável.
+  - **Critério de aceite:** `CHANGELOG.md` seguindo Keep a Changelog; versão
+    `0.1.0` no `pyproject.toml`; tag de release com as entregas dos primeiros
+    ciclos consolidadas.
+
 ---
 
 ## Próximo sprint (priorizado)
@@ -472,26 +543,47 @@ Fechamos os dois primeiros ciclos de features e a base de plataforma:
 8. **Plataforma/segurança:** validador de target compartilhado
    (`thursec/core/target.py`), defesa contra *argument injection*, usado por
    `recon.nmap` e `vuln.nuclei`. **Entregue.**
+9. **R1.2** `recon.whois` — registro de domínio via RDAP/WHOIS (`PASSIVE`).
+   **Entregue.**
+10. **R1.3** `recon.dns` — resolução/enumeração DNS via DNS-over-HTTPS
+    (`PASSIVE`). **Entregue.**
+11. **V1.1** `vuln.http_methods` — métodos HTTP perigosos e exposição de
+    informação (`ACTIVE`, read-only). **Entregue.**
+12. **D2.1/D2.2** `deps_secrets.dep_audit` — auditoria de dependências via OSV
+    (`PASSIVE`). **Entregue.**
+
+Total: **10 módulos** no `main` + núcleo + CLI (`list`/`run`/`diff`/`dashboard`)
++ findings store + TUI.
 
 ### Em andamento
 
 - **PLAT2 — Dashboard de postura** (`[EM DEV]`): visualização do findings store
   (tendência, diffs e distribuição por severidade). Construído agora sobre a
   memória que o PLAT1 passou a fornecer.
+- **C1.2** `config_audit.cookies` (`[EM DEV]`) — flags `Secure`/`HttpOnly`/
+  `SameSite` e políticas de sessão.
+- **V1.3** `vuln.cve_lookup` (`[EM DEV]`) — CVEs por fingerprint de serviço
+  (`PASSIVE`).
+- **C2.1** `config_audit.server_configs` (`[EM DEV]`) — lint de configs locais
+  (nginx/SSH).
+- **PLAT3 — Empacotamento / Distribuição e CI** (`[EM DEV]`): Docker, GitHub
+  Actions rodando os testes e release `0.1.0` + CHANGELOG.
 
 ### Candidatos aos próximos sprints
 
 Ampliam cobertura sem abrir novas frentes de risco; sem datas definidas:
 
 - **P1** Teste de resiliência / carga da própria infra (versão legítima do
-  "DoS") — `INTRUSIVE`, scope-gated + confirmação + teto de RPS.
+  "DoS") — `INTRUSIVE`, scope-gated + confirmação (V2.1) + teto de RPS;
+  **exige design antes**.
 - **P2** Simulação de conscientização interna (versão legítima do "phishing") —
-  só para funcionários próprios autorizados, sem coletar credencial real.
-- **R1.2** Consulta WHOIS / RDAP (`PASSIVE`) — contexto de registro do domínio.
-- **D2** Auditoria de dependências / CVEs — parser de manifestos (D2.1) +
-  cruzamento com advisories (D2.2), cobrindo risco de supply chain.
-- **C1.2** Checagem de cookies e políticas de sessão
-  (`Secure`/`HttpOnly`/`SameSite`).
+  página educativa + métrica de clique em lista interna autorizada, **sem
+  captura de credencial e sem envio enganoso em massa**, com registro de
+  autorização obrigatório; **exige design antes**.
+- **D2.3** Parsear vetor CVSS do OSV para score numérico — hoje `dep_audit` cai
+  no default `HIGH` quando o OSV entrega o CVSS como vetor.
+- **V2.1** Primitiva de check `INTRUSIVE` + fluxo de confirmação (pré-requisito
+  do P1).
 
 **Critério de pronto de cada item:** testes, documentação no README/contrato de
 módulo, respeitando a fronteira ética e o scope gate.
