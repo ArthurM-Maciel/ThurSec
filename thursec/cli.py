@@ -14,7 +14,7 @@ from pathlib import Path
 
 from . import __version__
 from .core.engine import Engine, Registry
-from .core.module import Category
+from .core.module import Category, Intensity
 from .core.dashboard import render_dashboard
 from .core.report import Report
 from .core.scope import Scope, ScopeError
@@ -50,6 +50,14 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Run every module in a category.",
     )
     run.add_argument("--scope", type=Path, help="Path to an authorized scope YAML file.")
+    run.add_argument(
+        "--confirm-intrusive", action="store_true",
+        help=(
+            "Confirm up front that INTRUSIVE modules (which may alter or disrupt "
+            "the target) are authorized. Without this flag an interactive run "
+            "prompts for confirmation; a non-interactive run skips them."
+        ),
+    )
     run.add_argument(
         "-o", "--output", type=Path,
         help="Write a report. Format inferred from extension (.json/.md/.html).",
@@ -116,6 +124,47 @@ def _select(registry: Registry, args: argparse.Namespace) -> list:
     return [m for m in registry.all() if not m.requires_scope]
 
 
+def _resolve_intrusive_confirmation(
+    modules: list, args: argparse.Namespace
+) -> dict[str, object]:
+    """Decide whether INTRUSIVE modules are confirmed for this run.
+
+    The engine enforces a *second* barrier beyond scope for INTRUSIVE modules:
+    it only runs them when ``options["confirm_intrusive"]`` is ``True``. This
+    helper is where the CLI earns that confirmation:
+
+    * ``--confirm-intrusive`` on the command line → confirmed (good for CI).
+    * otherwise, if any selected module is INTRUSIVE and we have a TTY, warn the
+      operator and require them to re-type the exact target. A mismatch (or any
+      other answer) leaves it unconfirmed, so the engine skips the module with a
+      clear reason.
+    * no flag and no TTY → unconfirmed; the engine skips with a clear reason.
+    """
+    options: dict[str, object] = {}
+    if args.confirm_intrusive:
+        options["confirm_intrusive"] = True
+        return options
+
+    intrusive = [m for m in modules if m.intensity == Intensity.INTRUSIVE]
+    if intrusive and sys.stdin.isatty():
+        ids = ", ".join(m.id for m in intrusive)
+        print(
+            f"\n!! INTRUSIVE module(s) selected: {ids}\n"
+            "   These may ALTER or DISRUPT the target (e.g. load testing).\n"
+            f"   To confirm, type the target exactly ({args.target}); "
+            "anything else aborts them."
+        )
+        try:
+            answer = input("   Confirm target> ").strip()
+        except (EOFError, KeyboardInterrupt):
+            answer = ""
+        if answer == args.target:
+            options["confirm_intrusive"] = True
+        else:
+            print("   Confirmation failed — intrusive modules will be skipped.")
+    return options
+
+
 async def _cmd_run(registry: Registry, args: argparse.Namespace) -> int:
     scope = None
     if args.scope:
@@ -126,8 +175,9 @@ async def _cmd_run(registry: Registry, args: argparse.Namespace) -> int:
             return 2
         print(f"Scope loaded: {scope.summary()}")
 
-    engine = Engine(registry, scope=scope)
     modules = _select(registry, args)
+    options = _resolve_intrusive_confirmation(modules, args)
+    engine = Engine(registry, scope=scope, options=options)
     report = Report(engagement=scope.engagement if scope else "ad-hoc")
 
     print(f"Running {len(modules)} module(s) against {args.target}\n")

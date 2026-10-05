@@ -83,3 +83,70 @@ async def test_passive_module_runs_without_scope():
     reg.register(_PassiveMod())
     res = await Engine(reg, scope=None).run_module(reg.get("test.passive"), "x.example")
     assert res.ok and len(res.findings) == 1
+
+
+# --- intrusive double barrier (scope + explicit confirmation) --------------
+class _IntrusiveMod(Module):
+    id = "test.intrusive"
+    name = "intrusive"
+    category = Category.VULN
+    intensity = Intensity.INTRUSIVE
+
+    async def run(self, ctx: RunContext):
+        return [ctx.finding(self.id, "disrupted", Severity.MEDIUM)]
+
+
+def _scope() -> Scope:
+    return Scope(engagement="t", authorized_by="me", targets=["x.example"])
+
+
+@pytest.mark.asyncio
+async def test_intrusive_skipped_without_scope():
+    # Barrier 1 (scope) fails first, regardless of confirmation.
+    reg = Registry()
+    reg.register(_IntrusiveMod())
+    eng = Engine(reg, scope=None, options={"confirm_intrusive": True})
+    res = await eng.run_module(reg.get("test.intrusive"), "x.example")
+    assert res.skipped and "scope" in res.skip_reason.lower()
+
+
+@pytest.mark.asyncio
+async def test_intrusive_skipped_in_scope_without_confirmation():
+    # Barrier 1 passes but barrier 2 (confirmation) blocks it.
+    reg = Registry()
+    reg.register(_IntrusiveMod())
+    eng = Engine(reg, scope=_scope())
+    res = await eng.run_module(reg.get("test.intrusive"), "x.example")
+    assert res.skipped
+    assert "INTRUSIVE" in res.skip_reason
+    assert "--confirm-intrusive" in res.skip_reason
+
+
+@pytest.mark.asyncio
+async def test_intrusive_runs_with_scope_and_confirmation():
+    # Both barriers satisfied → the module runs.
+    reg = Registry()
+    reg.register(_IntrusiveMod())
+    eng = Engine(reg, scope=_scope(), options={"confirm_intrusive": True})
+    res = await eng.run_module(reg.get("test.intrusive"), "x.example")
+    assert res.ok and len(res.findings) == 1
+
+
+@pytest.mark.asyncio
+async def test_intrusive_confirmation_requires_exact_true():
+    # A truthy-but-not-True value does not count as confirmation.
+    reg = Registry()
+    reg.register(_IntrusiveMod())
+    eng = Engine(reg, scope=_scope(), options={"confirm_intrusive": "yes"})
+    res = await eng.run_module(reg.get("test.intrusive"), "x.example")
+    assert res.skipped and "--confirm-intrusive" in res.skip_reason
+
+
+@pytest.mark.asyncio
+async def test_active_module_runs_in_scope_without_confirmation():
+    # Non-regression: ACTIVE needs scope only, never intrusive confirmation.
+    reg = Registry()
+    reg.register(_ActiveMod())
+    eng = Engine(reg, scope=_scope())
+    res = await eng.run_module(reg.get("test.active"), "x.example")
+    assert res.ok and len(res.findings) == 1

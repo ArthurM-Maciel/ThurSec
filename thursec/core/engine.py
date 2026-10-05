@@ -11,9 +11,10 @@ import importlib
 import inspect
 import pkgutil
 import time
+from typing import Any
 
 from .context import RunContext
-from .module import Category, Module, ModuleResult
+from .module import Category, Intensity, Module, ModuleResult
 from .scope import Scope, ScopeError
 
 
@@ -51,12 +52,40 @@ class Registry:
 
 
 class Engine:
-    def __init__(self, registry: Registry, scope: Scope | None = None):
+    """Runs modules behind the safety gates the core guarantees.
+
+    Two independent barriers protect the target, applied in this order:
+
+    1. **Scope gate** — ``ACTIVE`` and ``INTRUSIVE`` modules
+       (``module.requires_scope``) may only touch a target the loaded scope
+       authorizes. No scope, or an out-of-scope target, skips the module.
+    2. **Intrusive confirmation** — ``INTRUSIVE`` modules may change state or
+       disrupt the target, so on top of being in scope they require an
+       *explicit* confirmation. The engine reads it from its run options
+       (surfaced to modules as ``ctx.options``): the CLI sets
+       ``confirm_intrusive=True`` when the operator passes ``--confirm-intrusive``
+       or answers the interactive prompt. The two barriers are independent —
+       confirmation never substitutes for scope, and scope never implies
+       confirmation. An intrusive module runs only with *both*.
+
+    ``options`` is a free-form dict threaded into every ``RunContext`` so
+    callers can pass run-wide flags (like the confirmation above) to modules
+    without widening the ``run`` signature.
+    """
+
+    def __init__(
+        self,
+        registry: Registry,
+        scope: Scope | None = None,
+        options: dict[str, Any] | None = None,
+    ):
         self.registry = registry
         self.scope = scope
+        self.options: dict[str, Any] = options or {}
 
     async def run_module(self, module: Module, target: str) -> ModuleResult:
-        # Scope gate: active/intrusive modules require an authorized target.
+        # Barrier 1 — scope gate: active/intrusive modules require an
+        # authorized target.
         if module.requires_scope:
             if self.scope is None:
                 return ModuleResult(
@@ -74,7 +103,24 @@ class Engine:
                     module=module.id, skipped=True, skip_reason=str(e)
                 )
 
-        ctx = RunContext(target=target, scope=self.scope)
+        # Barrier 2 — intrusive confirmation: being in scope is not enough for
+        # a module that may disrupt the target; it also needs an explicit
+        # confirmation (set by the CLI via --confirm-intrusive or its prompt).
+        if (
+            module.intensity == Intensity.INTRUSIVE
+            and self.options.get("confirm_intrusive") is not True
+        ):
+            return ModuleResult(
+                module=module.id,
+                skipped=True,
+                skip_reason=(
+                    f"{module.id} is INTRUSIVE and may disrupt the target; "
+                    "re-run with explicit confirmation (--confirm-intrusive) "
+                    "to proceed."
+                ),
+            )
+
+        ctx = RunContext(target=target, scope=self.scope, options=self.options)
         started = time.monotonic()
         try:
             findings = await module.run(ctx)
