@@ -102,6 +102,9 @@ thursec run host.lab.example -c config_audit --scope scope.yaml -o report.html
 A bare `thursec run <target>` (no `-m`/`-c`) runs **passive modules only**, so it
 can never touch an out-of-scope host by accident.
 
+For a guided, fully self-contained walkthrough (safe, localhost-only), see
+[`DEMO.md`](DEMO.md).
+
 ## Writing a module
 
 A module is one class. The engine discovers it, handles scope, timing and
