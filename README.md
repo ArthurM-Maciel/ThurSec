@@ -1,5 +1,7 @@
 # ThurSec
 
+[![CI](https://github.com/ArthurM-Maciel/ThurSec/actions/workflows/ci.yml/badge.svg)](https://github.com/ArthurM-Maciel/ThurSec/actions/workflows/ci.yml)
+
 **Modular security assessment toolkit — for authorized engagements.**
 
 ThurSec is a plugin-based orchestrator for security work: recon, vulnerability
@@ -47,10 +49,47 @@ Passive modules (no packets to the target) run without a scope.
 
 ## Install
 
+### As a CLI tool (pipx)
+
+The quickest way to get the `thursec` command on your PATH, isolated in its own
+environment:
+
+```bash
+pipx install "thursec[tui]"            # from a local checkout, run inside the repo:
+pipx install ".[tui]"
+# …or straight from GitHub:
+pipx install "git+https://github.com/ArthurM-Maciel/ThurSec.git"
+```
+
+Drop the `[tui]` extra if you only need the CLI.
+
+### From source (development)
+
 ```bash
 python -m venv .venv && source .venv/bin/activate
 pip install -e ".[tui,dev]"
 ```
+
+### With Docker
+
+The image ships the CLI with all passive modules ready to go:
+
+```bash
+docker build -t thursec .
+docker run --rm thursec list
+docker run --rm thursec run example.com -m config_audit.tls_headers
+```
+
+To assess a target from a scope file, mount it into the container:
+
+```bash
+docker run --rm -v "$PWD/scope.yaml:/app/scope.yaml:ro" \
+  thursec run host.lab.example -c config_audit --scope /app/scope.yaml
+```
+
+> The active modules `recon.nmap` and `vuln.nuclei` shell out to the external
+> `nmap` / `nuclei` binaries, which are **not** bundled in the slim base image.
+> Install them in a derived image or run on a host that provides them.
 
 ## Usage
 

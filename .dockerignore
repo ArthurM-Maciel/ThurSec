@@ -1,0 +1,35 @@
+# Keep the build context small and the image clean.
+
+# VCS
+.git
+.gitignore
+
+# Virtual environments
+.venv
+venv
+
+# Python caches / build artifacts
+__pycache__
+*.py[cod]
+*.egg-info
+dist
+build
+.pytest_cache
+.mypy_cache
+.ruff_cache
+
+# Tests are not needed in the runtime image
+tests
+
+# Local tooling / docs / CI not needed at runtime
+.github
+.claude
+docs
+
+# Engagement data and reports must never enter an image
+scope.yaml
+scope.*.yaml
+reports
+*.report.json
+*.report.md
+*.report.html
