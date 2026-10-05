@@ -24,6 +24,7 @@ class Category(str, Enum):
     VULN = "vuln"
     DEPS_SECRETS = "deps_secrets"
     CONFIG_AUDIT = "config_audit"
+    RESILIENCE = "resilience"
 
 
 class Intensity(str, Enum):
