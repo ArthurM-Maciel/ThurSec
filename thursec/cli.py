@@ -92,7 +92,54 @@ def _build_parser() -> argparse.ArgumentParser:
         "-o", "--output", type=Path,
         help="Write the dashboard here (default: dashboard.html).",
     )
+
+    _add_awareness_parser(sub)
     return p
+
+
+def _add_awareness_parser(sub) -> None:
+    aw = sub.add_parser(
+        "awareness",
+        help="Authorized security-awareness (anti-phishing training) tooling.",
+    )
+    aw_sub = aw.add_subparsers(dest="action", required=True)
+
+    gen = aw_sub.add_parser(
+        "generate",
+        help="Generate an EDUCATIONAL landing page, training e-mail template, "
+             "and per-recipient tracking tokens for an authorized campaign.",
+    )
+    gen.add_argument("--name", default="Security Awareness Exercise",
+                     help="Campaign name (used in generated artifacts).")
+    gen.add_argument("--authorized-by", dest="authorized_by",
+                     help="Name of the person who approved this exercise (required).")
+    gen.add_argument("--authorized-on", dest="authorized_on",
+                     help="Approval date, ISO format YYYY-MM-DD (required).")
+    gen.add_argument("--allow", action="append", default=[], metavar="DOMAIN|EMAIL",
+                     help="Allowlist entry: a domain or e-mail (repeatable).")
+    gen.add_argument("--allowlist-file", type=Path,
+                     help="File with one allowlist entry (domain or e-mail) per line.")
+    gen.add_argument("--recipient", action="append", default=[], metavar="EMAIL",
+                     help="Recipient e-mail (repeatable).")
+    gen.add_argument("--recipients-file", type=Path,
+                     help="File with one recipient e-mail per line.")
+    gen.add_argument("--base-url", dest="base_url", required=True,
+                     help="Operator-hosted URL of the educational landing page.")
+    gen.add_argument("--org-contact", dest="org_contact",
+                     help="How trainees should reach the security team.")
+    gen.add_argument("-o", "--output-dir", dest="output_dir", type=Path,
+                     default=Path("awareness_campaign"),
+                     help="Directory to write artifacts into (default: ./awareness_campaign).")
+
+    tally = aw_sub.add_parser(
+        "tally",
+        help="Compute aggregate, non-punitive click metrics from a token list "
+             "and a click log.",
+    )
+    tally.add_argument("--tokens-file", type=Path, required=True,
+                       help="CSV (recipient,token,tracking_url) or newline token list.")
+    tally.add_argument("--click-log", dest="click_log", type=Path, required=True,
+                       help="File of observed tokens (one per line) from operator web logs.")
 
 
 def _cmd_list(registry: Registry) -> int:
@@ -299,6 +346,112 @@ def _resolve_latest_target(store: FindingStore) -> str | None:
     return runs[0]["target"] if runs else None
 
 
+def _read_lines(path: Path) -> list[str]:
+    return [
+        line.strip()
+        for line in path.read_text(encoding="utf-8").splitlines()
+        if line.strip() and not line.strip().startswith("#")
+    ]
+
+
+def _read_tokens(path: Path) -> list[str]:
+    """Read tokens from a plain list OR the CSV written by `generate`."""
+    import csv as _csv
+
+    text = path.read_text(encoding="utf-8")
+    first = text.splitlines()[0] if text.splitlines() else ""
+    if "," in first and "token" in first.lower():
+        reader = _csv.DictReader(text.splitlines())
+        return [row["token"].strip() for row in reader if row.get("token", "").strip()]
+    return [ln.strip() for ln in text.splitlines() if ln.strip()]
+
+
+def _cmd_awareness(args: argparse.Namespace) -> int:
+    from .awareness import (
+        Allowlist,
+        Authorization,
+        AwarenessError,
+        Campaign,
+        render_email_template,
+        render_landing_page,
+        tally_clicks,
+    )
+
+    if args.action == "generate":
+        try:
+            authorization = Authorization.create(args.authorized_by, args.authorized_on)
+
+            entries = list(args.allow)
+            if args.allowlist_file:
+                entries += _read_lines(args.allowlist_file)
+            allowlist = Allowlist.from_entries(entries)
+
+            recipients = list(args.recipient)
+            if args.recipients_file:
+                recipients += _read_lines(args.recipients_file)
+            if not recipients:
+                print("awareness error: no recipients provided (use --recipient "
+                      "or --recipients-file)", file=sys.stderr)
+                return 2
+
+            campaign = Campaign(
+                name=args.name,
+                authorization=authorization,
+                allowlist=allowlist,
+                base_url=args.base_url,
+                recipients=recipients,
+            )
+        except AwarenessError as e:
+            print(f"awareness error: {e}", file=sys.stderr)
+            return 2
+
+        out = args.output_dir
+        out.mkdir(parents=True, exist_ok=True)
+        landing = render_landing_page(
+            campaign_name=campaign.name,
+            authorized_by=authorization.authorized_by,
+            authorized_on=authorization.authorized_on,
+            org_contact=args.org_contact,
+        )
+        email = render_email_template(
+            campaign_name=campaign.name,
+            authorized_by=authorization.authorized_by,
+            authorized_on=authorization.authorized_on,
+        )
+        (out / "landing_page.html").write_text(landing, encoding="utf-8")
+        (out / "email_template.txt").write_text(email, encoding="utf-8")
+        (out / "tokens.csv").write_text(campaign.tokens_to_csv(), encoding="utf-8")
+        (out / "tokens.json").write_text(campaign.tokens_to_json(), encoding="utf-8")
+
+        print(f"Authorized by {authorization.authorized_by} on "
+              f"{authorization.authorized_on.isoformat()}")
+        print(f"Allowlist OK · {len(campaign.recipients)} recipient(s) validated")
+        print(f"Artifacts written to {out}/:")
+        print("  landing_page.html   (educational — NO credential capture)")
+        print("  email_template.txt  (training template — NOT sent by this tool)")
+        print("  tokens.csv, tokens.json  (per-recipient tracking tokens)")
+        return 0
+
+    if args.action == "tally":
+        try:
+            tokens = _read_tokens(args.tokens_file)
+            clicks = _read_lines(args.click_log)
+        except OSError as e:
+            print(f"awareness error: {e}", file=sys.stderr)
+            return 2
+        metrics = tally_clicks(tokens, clicks)
+        print("Aggregate awareness metrics (non-punitive):")
+        print(f"  sent         {metrics['sent']}")
+        print(f"  clicked      {metrics['clicked']}")
+        print(f"  not clicked  {metrics['not_clicked']}")
+        print(f"  click rate   {metrics['click_rate'] * 100:.1f}%")
+        if metrics["unknown_hits"]:
+            print(f"  unknown hits {metrics['unknown_hits']} (tokens not in issued set)")
+        return 0
+
+    return 1
+
+
 def main(argv: list[str] | None = None) -> int:
     args = _build_parser().parse_args(argv)
     registry = Registry().discover()
@@ -312,6 +465,8 @@ def main(argv: list[str] | None = None) -> int:
         return _cmd_diff(args)
     if args.command == "dashboard":
         return _cmd_dashboard(args)
+    if args.command == "awareness":
+        return _cmd_awareness(args)
     return 1
 
 
