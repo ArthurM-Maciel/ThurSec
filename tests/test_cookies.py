@@ -12,7 +12,19 @@ import pytest
 
 from thursec.core.context import RunContext
 from thursec.core.finding import Severity
+from thursec.core.i18n import get_lang, set_lang
 from thursec.modules.config_audit.cookies import CookieAudit
+
+
+@pytest.fixture(autouse=True)
+def _force_en():
+    """These assertions check English text; pin the language and restore it."""
+    previous = get_lang()
+    set_lang("en")
+    try:
+        yield
+    finally:
+        set_lang(previous)
 
 
 def _ctx(target="https://example.com", **options):

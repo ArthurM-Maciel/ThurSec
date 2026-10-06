@@ -29,6 +29,8 @@ from datetime import date
 from html import escape
 from urllib.parse import quote
 
+from ..core.i18n import L, Lf
+
 
 class AwarenessError(Exception):
     """Base class for all awareness-subsystem errors."""
@@ -66,13 +68,21 @@ class Authorization:
     def __post_init__(self) -> None:
         if not self.authorized_by or not self.authorized_by.strip():
             raise AuthorizationError(
-                "campaign requires 'authorized_by' (name of the person who "
-                "approved this awareness exercise)"
+                L(
+                    "a campanha exige 'authorized_by' (nome da pessoa que "
+                    "aprovou este exercício de conscientização)",
+                    "campaign requires 'authorized_by' (name of the person who "
+                    "approved this awareness exercise)",
+                )
             )
         if not isinstance(self.authorized_on, date):
             raise AuthorizationError(
-                "campaign requires 'authorized_on' as a date "
-                "(when the exercise was approved)"
+                L(
+                    "a campanha exige 'authorized_on' como data "
+                    "(quando o exercício foi aprovado)",
+                    "campaign requires 'authorized_on' as a date "
+                    "(when the exercise was approved)",
+                )
             )
 
     @classmethod
@@ -80,13 +90,21 @@ class Authorization:
         """Build an :class:`Authorization`, parsing an ISO date string if given."""
         if authorized_by is None or not str(authorized_by).strip():
             raise AuthorizationError(
-                "missing authorization: provide --authorized-by (who approved "
-                "this awareness exercise)"
+                L(
+                    "autorização ausente: forneça --authorized-by (quem aprovou "
+                    "este exercício de conscientização)",
+                    "missing authorization: provide --authorized-by (who approved "
+                    "this awareness exercise)",
+                )
             )
         if authorized_on is None or (isinstance(authorized_on, str) and not authorized_on.strip()):
             raise AuthorizationError(
-                "missing authorization: provide --authorized-on (the approval "
-                "date, e.g. 2026-10-05)"
+                L(
+                    "autorização ausente: forneça --authorized-on (a data de "
+                    "aprovação, ex.: 2026-10-05)",
+                    "missing authorization: provide --authorized-on (the approval "
+                    "date, e.g. 2026-10-05)",
+                )
             )
         if isinstance(authorized_on, date):
             parsed = authorized_on
@@ -95,8 +113,13 @@ class Authorization:
                 parsed = date.fromisoformat(authorized_on.strip())
             except ValueError as exc:
                 raise AuthorizationError(
-                    f"invalid authorization date {authorized_on!r}: use ISO "
-                    f"format YYYY-MM-DD"
+                    Lf(
+                        "data de autorização inválida {value!r}: use o formato "
+                        "ISO AAAA-MM-DD",
+                        "invalid authorization date {value!r}: use ISO "
+                        "format YYYY-MM-DD",
+                        value=authorized_on,
+                    )
                 ) from exc
         return cls(authorized_by=authorized_by.strip(), authorized_on=parsed)
 
@@ -117,8 +140,12 @@ class Allowlist:
     def __post_init__(self) -> None:
         if not self.domains and not self.emails:
             raise AllowlistError(
-                "empty allowlist: a campaign must declare at least one "
-                "permitted domain or e-mail address"
+                L(
+                    "allowlist vazia: uma campanha deve declarar ao menos um "
+                    "domínio ou endereço de e-mail permitido",
+                    "empty allowlist: a campaign must declare at least one "
+                    "permitted domain or e-mail address",
+                )
             )
 
     @classmethod
@@ -126,8 +153,12 @@ class Allowlist:
         """Split an iterable of entries into e-mail and domain allowlists."""
         if entries is None:
             raise AllowlistError(
-                "missing allowlist: provide the domain(s) and/or e-mail(s) a "
-                "campaign is permitted to target"
+                L(
+                    "allowlist ausente: forneça o(s) domínio(s) e/ou e-mail(s) que "
+                    "a campanha está autorizada a atingir",
+                    "missing allowlist: provide the domain(s) and/or e-mail(s) a "
+                    "campaign is permitted to target",
+                )
             )
         domains: set[str] = set()
         emails: set[str] = set()
@@ -169,11 +200,16 @@ class Allowlist:
                 rejected.append(addr)
         if rejected:
             raise AllowlistError(
-                "recipient(s) outside the allowlist — refusing to generate "
-                "campaign artifacts: " + ", ".join(sorted(set(rejected)))
+                L(
+                    "destinatário(s) fora da allowlist — recusando a geração de "
+                    "artefatos da campanha: ",
+                    "recipient(s) outside the allowlist — refusing to generate "
+                    "campaign artifacts: ",
+                )
+                + ", ".join(sorted(set(rejected)))
             )
         if not normalized:
-            raise AllowlistError("no recipients provided for the campaign")
+            raise AllowlistError(L("nenhum destinatário fornecido para a campanha", "no recipients provided for the campaign"))
         return normalized
 
 
@@ -204,13 +240,17 @@ class Campaign:
 
     def __post_init__(self) -> None:
         if not isinstance(self.authorization, Authorization):
-            raise AuthorizationError("campaign requires a valid Authorization")
+            raise AuthorizationError(L("a campanha exige uma Authorization válida", "campaign requires a valid Authorization"))
         if not isinstance(self.allowlist, Allowlist):
-            raise AllowlistError("campaign requires a valid Allowlist")
+            raise AllowlistError(L("a campanha exige uma Allowlist válida", "campaign requires a valid Allowlist"))
         if not self.base_url or not self.base_url.strip():
             raise AwarenessError(
-                "base_url is required (the operator-hosted URL of the "
-                "educational landing page)"
+                L(
+                    "base_url é obrigatória (a URL hospedada pelo operador da "
+                    "página educativa de destino)",
+                    "base_url is required (the operator-hosted URL of the "
+                    "educational landing page)",
+                )
             )
         self.base_url = self.base_url.strip()
         # Hard gate: validate recipients against the allowlist BEFORE anything
@@ -304,7 +344,7 @@ def tally_clicks(tokens, click_log) -> dict:
 
 def render_landing_page(
     *,
-    campaign_name: str = "Security Awareness Exercise",
+    campaign_name: str | None = None,
     authorized_by: str | None = None,
     authorized_on: str | date | None = None,
     org_contact: str | None = None,
@@ -316,26 +356,33 @@ def render_landing_page(
     credential POST. Its sole purpose is to explain that the message was a
     sanctioned awareness test and to teach how to spot real phishing.
     """
-    name = escape(campaign_name)
+    name = escape(campaign_name or L("Exercício de Conscientização em Segurança", "Security Awareness Exercise"))
     by = escape(authorized_by) if authorized_by else None
     on = authorized_on.isoformat() if isinstance(authorized_on, date) else (
         escape(str(authorized_on)) if authorized_on else None
     )
-    contact = escape(org_contact) if org_contact else "your security team"
+    contact = escape(org_contact) if org_contact else L("sua equipe de segurança", "your security team")
 
     auth_line = ""
     if by and on:
         auth_line = (
-            f'<p class="auth">Authorized awareness exercise · approved by '
-            f"<strong>{by}</strong> on <strong>{on}</strong>.</p>"
+            f'<p class="auth">'
+            + Lf(
+                "Exercício de conscientização autorizado · aprovado por "
+                "<strong>{by}</strong> em <strong>{on}</strong>.",
+                "Authorized awareness exercise · approved by "
+                "<strong>{by}</strong> on <strong>{on}</strong>.",
+                by=by, on=on,
+            )
+            + "</p>"
         )
 
     return f"""<!doctype html>
-<html lang="en">
+<html lang="{L("pt-BR", "en")}">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>{name} — Awareness Training</title>
+<title>{name} — {L("Treinamento de Conscientização", "Awareness Training")}</title>
 <style>
   :root {{
     --bg: #0b1020; --panel: #121a30; --ink: #e7ecf5; --muted: #9fb0cc;
@@ -376,40 +423,63 @@ def render_landing_page(
 </head>
 <body>
   <main class="card">
-    <span class="badge">Awareness Training</span>
-    <h1>This was a security awareness test.</h1>
+    <span class="badge">{L("Treinamento de Conscientização", "Awareness Training")}</span>
+    <h1>{L("Isto foi um teste de conscientização em segurança.", "This was a security awareness test.")}</h1>
     <p class="lead">
-      You followed a link from a simulated phishing message sent by {contact}.
-      No harm was done and <strong>nothing about you was recorded beyond an
-      anonymous click</strong>. This exercise is here to help you — not to
-      catch you out.
+      {Lf(
+        "Você seguiu um link de uma mensagem de phishing simulada enviada por "
+        "{contact}. Nenhum dano foi causado e <strong>nada sobre você foi "
+        "registrado além de um clique anônimo</strong>. Este exercício existe "
+        "para ajudar você — não para pegá-lo de surpresa.",
+        "You followed a link from a simulated phishing message sent by {contact}. "
+        "No harm was done and <strong>nothing about you was recorded beyond an "
+        "anonymous click</strong>. This exercise is here to help you — not to "
+        "catch you out.",
+        contact=contact,
+      )}
     </p>
     {auth_line}
 
-    <h2>How to spot the next one</h2>
+    <h2>{L("Como identificar a próxima", "How to spot the next one")}</h2>
     <ul>
-      <li><span class="flag">Unexpected urgency.</span> "Act now or your account
-        will be locked" is pressure designed to stop you thinking.</li>
-      <li><span class="flag">Mismatched sender &amp; links.</span> Hover over
-        links before clicking; check the real domain, not the display text.</li>
-      <li><span class="flag">Requests for credentials.</span> Legitimate IT will
-        never ask for your password by e-mail or on a linked page.</li>
-      <li><span class="flag">Odd greetings or grammar.</span> Generic "Dear user"
-        and small language slips are common tells.</li>
-      <li><span class="flag">Unexpected attachments.</span> Do not open files you
-        were not expecting, even from known names.</li>
+      <li><span class="flag">{L("Urgência inesperada.", "Unexpected urgency.")}</span> {L(
+        "\"Aja agora ou sua conta será bloqueada\" é uma pressão criada para "
+        "impedir você de pensar.",
+        "\"Act now or your account will be locked\" is pressure designed to stop "
+        "you thinking.")}</li>
+      <li><span class="flag">{L("Remetente e links incompatíveis.", "Mismatched sender &amp; links.")}</span> {L(
+        "Passe o mouse sobre os links antes de clicar; verifique o domínio real, "
+        "não o texto exibido.",
+        "Hover over links before clicking; check the real domain, not the display "
+        "text.")}</li>
+      <li><span class="flag">{L("Pedidos de credenciais.", "Requests for credentials.")}</span> {L(
+        "Uma equipe de TI legítima nunca pedirá sua senha por e-mail ou em uma "
+        "página vinculada.",
+        "Legitimate IT will never ask for your password by e-mail or on a linked "
+        "page.")}</li>
+      <li><span class="flag">{L("Saudações ou gramática estranhas.", "Odd greetings or grammar.")}</span> {L(
+        "Um genérico \"Prezado usuário\" e pequenos deslizes de linguagem são "
+        "sinais comuns.",
+        "Generic \"Dear user\" and small language slips are common tells.")}</li>
+      <li><span class="flag">{L("Anexos inesperados.", "Unexpected attachments.")}</span> {L(
+        "Não abra arquivos que você não esperava, mesmo de nomes conhecidos.",
+        "Do not open files you were not expecting, even from known names.")}</li>
     </ul>
 
-    <h2>What to do when you suspect phishing</h2>
+    <h2>{L("O que fazer ao suspeitar de phishing", "What to do when you suspect phishing")}</h2>
     <ul>
-      <li>Do not click, reply, or enter any information.</li>
-      <li>Report it to {contact} using your normal reporting channel.</li>
-      <li>When in doubt, verify through a channel you already trust.</li>
+      <li>{L("Não clique, não responda e não insira nenhuma informação.", "Do not click, reply, or enter any information.")}</li>
+      <li>{Lf("Reporte para {contact} usando seu canal normal de denúncia.", "Report it to {contact} using your normal reporting channel.", contact=contact)}</li>
+      <li>{L("Na dúvida, verifique por um canal em que você já confia.", "When in doubt, verify through a channel you already trust.")}</li>
     </ul>
 
     <p class="foot">
-      Reporting a suspicious message is always the right call — you will never be
-      penalized for it. Thank you for helping keep everyone safe.
+      {L(
+        "Reportar uma mensagem suspeita é sempre a atitude certa — você nunca "
+        "será penalizado por isso. Obrigado por ajudar a manter todos seguros.",
+        "Reporting a suspicious message is always the right call — you will never "
+        "be penalized for it. Thank you for helping keep everyone safe.",
+      )}
     </p>
   </main>
 </body>
@@ -419,9 +489,9 @@ def render_landing_page(
 
 def render_email_template(
     *,
-    campaign_name: str = "Security Awareness Exercise",
+    campaign_name: str | None = None,
     tracking_url: str = "{{TRACKING_URL}}",
-    sender_pretext: str = "IT Service Desk",
+    sender_pretext: str | None = None,
     authorized_by: str | None = None,
     authorized_on: str | date | None = None,
 ) -> str:
@@ -439,29 +509,43 @@ def render_email_template(
     on = authorized_on.isoformat() if isinstance(authorized_on, date) else (
         str(authorized_on) if authorized_on else "N/A"
     )
-    by = authorized_by or "the organization's security team"
+    campaign_name = campaign_name or L("Exercício de Conscientização em Segurança", "Security Awareness Exercise")
+    sender_pretext = sender_pretext or L("Central de Atendimento de TI", "IT Service Desk")
+    by = authorized_by or L("a equipe de segurança da organização", "the organization's security team")
 
-    return f"""Subject: Action required: verify your account access
+    return f"""{L("Assunto", "Subject")}: {L("Ação necessária: verifique o acesso à sua conta", "Action required: verify your account access")}
 
-From: {sender_pretext}
+{L("De", "From")}: {sender_pretext}
 
-Hello,
+{L("Olá,", "Hello,")}
 
-We are carrying out a routine review of account access. Please review your
-details at the link below at your earliest convenience:
+{Lf(
+    "Estamos realizando uma revisão de rotina do acesso às contas. Por favor, "
+    "revise seus dados no link abaixo assim que possível:",
+    "We are carrying out a routine review of account access. Please review your "
+    "details at the link below at your earliest convenience:",
+)}
 
     {tracking_url}
 
-If you have any questions, contact the service desk.
+{L("Em caso de dúvidas, entre em contato com a central de atendimento.", "If you have any questions, contact the service desk.")}
 
-Thank you,
+{L("Obrigado,", "Thank you,")}
 {sender_pretext}
 
 ----------------------------------------------------------------------
-SIMULATION NOTICE — SECURITY AWARENESS TRAINING
-This message is a SIMULATED phishing e-mail, part of the authorized
-"{campaign_name}" awareness exercise. It was not sent by a real service
-desk and asks for nothing real. Authorized by: {by}; approval date: {on}.
-The link leads only to an educational page. No credentials are collected.
+{L("AVISO DE SIMULAÇÃO — TREINAMENTO DE CONSCIENTIZAÇÃO EM SEGURANÇA", "SIMULATION NOTICE — SECURITY AWARENESS TRAINING")}
+{Lf(
+    "Esta mensagem é um e-mail de phishing SIMULADO, parte do exercício "
+    "autorizado de conscientização \"{campaign}\". Ela não foi enviada por uma "
+    "central de atendimento real e não pede nada verdadeiro. Autorizado por: "
+    "{by}; data de aprovação: {on}. O link leva apenas a uma página educativa. "
+    "Nenhuma credencial é coletada.",
+    "This message is a SIMULATED phishing e-mail, part of the authorized "
+    "\"{campaign}\" awareness exercise. It was not sent by a real service "
+    "desk and asks for nothing real. Authorized by: {by}; approval date: {on}. "
+    "The link leads only to an educational page. No credentials are collected.",
+    campaign=campaign_name, by=by, on=on,
+)}
 ----------------------------------------------------------------------
 """

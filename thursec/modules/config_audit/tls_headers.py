@@ -18,28 +18,34 @@ from datetime import datetime, timezone
 
 from ...core.context import RunContext
 from ...core.finding import Finding, Severity
+from ...core.i18n import L, Lf
 from ...core.module import Category, Intensity, Module
 
-# header -> (severity if missing, human recommendation)
-_SECURITY_HEADERS: dict[str, tuple[Severity, str]] = {
+# header -> (severity if missing, recommendation PT, recommendation EN)
+_SECURITY_HEADERS: dict[str, tuple[Severity, str, str]] = {
     "strict-transport-security": (
         Severity.MEDIUM,
+        "Adicione HSTS para forçar HTTPS e impedir downgrade de protocolo.",
         "Add HSTS to force HTTPS and prevent protocol downgrade.",
     ),
     "content-security-policy": (
         Severity.MEDIUM,
+        "Adicione um Content-Security-Policy para mitigar XSS e injeção de dados.",
         "Add a Content-Security-Policy to mitigate XSS and data injection.",
     ),
     "x-content-type-options": (
         Severity.LOW,
+        "Defina 'X-Content-Type-Options: nosniff' para impedir MIME sniffing.",
         "Set 'X-Content-Type-Options: nosniff' to stop MIME sniffing.",
     ),
     "x-frame-options": (
         Severity.LOW,
+        "Defina X-Frame-Options (ou CSP frame-ancestors) para prevenir clickjacking.",
         "Set X-Frame-Options (or CSP frame-ancestors) to prevent clickjacking.",
     ),
     "referrer-policy": (
         Severity.INFO,
+        "Defina um Referrer-Policy para limitar o vazamento do referrer.",
         "Set a Referrer-Policy to limit referrer leakage.",
     ),
 }
@@ -47,10 +53,20 @@ _SECURITY_HEADERS: dict[str, tuple[Severity, str]] = {
 
 class TlsHeadersAudit(Module):
     id = "config_audit.tls_headers"
-    name = "TLS & HTTP security headers"
     category = Category.CONFIG_AUDIT
     intensity = Intensity.ACTIVE
-    description = "Check certificate validity, TLS version, and HTTP security headers."
+
+    @property
+    def name(self) -> str:
+        return L("Cabeçalhos de segurança TLS e HTTP", "TLS & HTTP security headers")
+
+    @property
+    def description(self) -> str:
+        return L(
+            "Verifica a validade do certificado, a versão do TLS e os cabeçalhos "
+            "de segurança HTTP.",
+            "Check certificate validity, TLS version, and HTTP security headers.",
+        )
 
     async def run(self, ctx: RunContext) -> list[Finding]:
         host = _hostname(ctx.target)
@@ -64,11 +80,15 @@ class TlsHeadersAudit(Module):
             findings.append(
                 ctx.finding(
                     self.id,
-                    "Could not establish TLS connection",
+                    L("Não foi possível estabelecer conexão TLS", "Could not establish TLS connection"),
                     Severity.MEDIUM,
-                    description=f"Failed to complete a TLS handshake with {host}:{port}.",
+                    description=Lf(
+                        "Falha ao completar o handshake TLS com {host}:{port}.",
+                        "Failed to complete a TLS handshake with {host}:{port}.",
+                        host=host, port=port,
+                    ),
                     evidence=f"{type(e).__name__}: {e}",
-                    recommendation="Verify the host serves TLS on this port.",
+                    recommendation=L("Verifique se o host oferece TLS nesta porta.", "Verify the host serves TLS on this port."),
                 )
             )
             return findings
@@ -88,27 +108,34 @@ class TlsHeadersAudit(Module):
         )
         days = (expires - datetime.now(timezone.utc)).days
         if days < 0:
-            sev, title = Severity.CRITICAL, "TLS certificate is expired"
+            sev = Severity.CRITICAL
+            title = L("Certificado TLS expirado", "TLS certificate is expired")
         elif days <= 14:
-            sev, title = Severity.HIGH, f"TLS certificate expires in {days} day(s)"
+            sev = Severity.HIGH
+            title = Lf("Certificado TLS expira em {days} dia(s)", "TLS certificate expires in {days} day(s)", days=days)
         elif days <= 30:
-            sev, title = Severity.MEDIUM, f"TLS certificate expires in {days} day(s)"
+            sev = Severity.MEDIUM
+            title = Lf("Certificado TLS expira em {days} dia(s)", "TLS certificate expires in {days} day(s)", days=days)
         else:
             return [
                 ctx.finding(
                     self.id,
-                    "TLS certificate validity OK",
+                    L("Validade do certificado TLS OK", "TLS certificate validity OK"),
                     Severity.INFO,
-                    description=f"Certificate valid for {days} more day(s).",
+                    description=Lf("Certificado válido por mais {days} dia(s).", "Certificate valid for {days} more day(s).", days=days),
                     evidence=f"notAfter={not_after}",
                 )
             ]
         return [
             ctx.finding(
                 self.id, title, sev,
-                description=f"Certificate for {host}:{port} needs renewal.",
+                description=Lf(
+                    "O certificado de {host}:{port} precisa ser renovado.",
+                    "Certificate for {host}:{port} needs renewal.",
+                    host=host, port=port,
+                ),
                 evidence=f"notAfter={not_after}",
-                recommendation="Renew/rotate the certificate before it lapses.",
+                recommendation=L("Renove/rotacione o certificado antes que ele expire.", "Renew/rotate the certificate before it lapses."),
             )
         ]
 
@@ -120,17 +147,17 @@ class TlsHeadersAudit(Module):
             return [
                 ctx.finding(
                     self.id,
-                    f"Weak TLS protocol negotiated: {proto}",
+                    Lf("Protocolo TLS fraco negociado: {proto}", "Weak TLS protocol negotiated: {proto}", proto=proto),
                     Severity.HIGH,
-                    description="The server negotiated an outdated TLS/SSL version.",
+                    description=L("O servidor negociou uma versão TLS/SSL desatualizada.", "The server negotiated an outdated TLS/SSL version."),
                     evidence=f"negotiated={proto}",
-                    recommendation="Disable TLS < 1.2; prefer TLS 1.3.",
+                    recommendation=L("Desative TLS < 1.2; prefira TLS 1.3.", "Disable TLS < 1.2; prefer TLS 1.3."),
                     references=["https://datatracker.ietf.org/doc/html/rfc8996"],
                 )
             ]
         return [
             ctx.finding(
-                self.id, f"TLS protocol OK ({proto})", Severity.INFO,
+                self.id, Lf("Protocolo TLS OK ({proto})", "TLS protocol OK ({proto})", proto=proto), Severity.INFO,
                 evidence=f"negotiated={proto}",
             )
         ]
@@ -141,30 +168,37 @@ class TlsHeadersAudit(Module):
         except Exception as e:
             return [
                 ctx.finding(
-                    self.id, "Could not fetch HTTP headers", Severity.LOW,
+                    self.id, L("Não foi possível obter os cabeçalhos HTTP", "Could not fetch HTTP headers"), Severity.LOW,
                     evidence=f"{type(e).__name__}: {e}",
                 )
             ]
         present = {k.lower() for k in headers}
         findings = []
-        for header, (sev, rec) in _SECURITY_HEADERS.items():
+        for header, (sev, rec_pt, rec_en) in _SECURITY_HEADERS.items():
             if header not in present:
                 findings.append(
                     ctx.finding(
                         self.id,
-                        f"Missing security header: {header}",
+                        Lf("Cabeçalho de segurança ausente: {header}", "Missing security header: {header}", header=header),
                         sev,
-                        description=f"Response from {host} does not set '{header}'.",
-                        recommendation=rec,
+                        description=Lf(
+                            "A resposta de {host} não define '{header}'.",
+                            "Response from {host} does not set '{header}'.",
+                            host=host, header=header,
+                        ),
+                        recommendation=L(rec_pt, rec_en),
                     )
                 )
         server = headers.get("Server")
         if server:
             findings.append(
                 ctx.finding(
-                    self.id, "Server banner disclosed", Severity.INFO,
+                    self.id, L("Banner do servidor divulgado", "Server banner disclosed"), Severity.INFO,
                     evidence=f"Server: {server}",
-                    recommendation="Consider suppressing the Server header to reduce fingerprinting.",
+                    recommendation=L(
+                        "Considere suprimir o cabeçalho Server para reduzir o fingerprinting.",
+                        "Consider suppressing the Server header to reduce fingerprinting.",
+                    ),
                 )
             )
         return findings
