@@ -14,6 +14,7 @@ import time
 from typing import Any
 
 from .context import RunContext
+from .i18n import Lf
 from .module import Category, Intensity, Module, ModuleResult
 from .scope import Scope, ScopeError
 
@@ -91,9 +92,14 @@ class Engine:
                 return ModuleResult(
                     module=module.id,
                     skipped=True,
-                    skip_reason=(
-                        f"{module.id} is {module.intensity.value}; load a scope file "
-                        f"(--scope) before running it against {target!r}."
+                    skip_reason=Lf(
+                        "{mid} é {intensity}; carregue um arquivo de escopo "
+                        "(--scope) antes de executá-lo contra {target!r}.",
+                        "{mid} is {intensity}; load a scope file "
+                        "(--scope) before running it against {target!r}.",
+                        mid=module.id,
+                        intensity=module.intensity.value,
+                        target=target,
                     ),
                 )
             try:
@@ -113,10 +119,14 @@ class Engine:
             return ModuleResult(
                 module=module.id,
                 skipped=True,
-                skip_reason=(
-                    f"{module.id} is INTRUSIVE and may disrupt the target; "
+                skip_reason=Lf(
+                    "{mid} é INTRUSIVE e pode perturbar o alvo; execute "
+                    "novamente com confirmação explícita (--confirm-intrusive) "
+                    "para prosseguir.",
+                    "{mid} is INTRUSIVE and may disrupt the target; "
                     "re-run with explicit confirmation (--confirm-intrusive) "
-                    "to proceed."
+                    "to proceed.",
+                    mid=module.id,
                 ),
             )
 
