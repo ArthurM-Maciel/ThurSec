@@ -14,6 +14,18 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 
 from .finding import Finding, Severity
+from .i18n import L, Lf
+
+
+def _sev_label(name: str) -> str:
+    """Localized display label for a severity name (JSON keys stay canonical)."""
+    return {
+        "CRITICAL": L("Crítico", "Critical"),
+        "HIGH": L("Alto", "High"),
+        "MEDIUM": L("Médio", "Medium"),
+        "LOW": L("Baixo", "Low"),
+        "INFO": L("Informativo", "Info"),
+    }.get(name.upper(), name.capitalize())
 
 
 @dataclass(slots=True)
@@ -52,35 +64,55 @@ class Report:
 
     def to_markdown(self) -> str:
         lines = [
-            f"# ThurSec report — {self.engagement}",
+            Lf("# Relatório ThurSec — {e}", "# ThurSec report — {e}", e=self.engagement),
             "",
-            f"_Generated {self.generated_at.isoformat(timespec='seconds')}_",
+            Lf(
+                "_Gerado em {g}_",
+                "_Generated {g}_",
+                g=self.generated_at.isoformat(timespec="seconds"),
+            ),
             "",
-            "## Summary",
+            L("## Resumo", "## Summary"),
             "",
-            "| Severity | Count |",
+            L("| Severidade | Quantidade |", "| Severity | Count |"),
             "| --- | --- |",
         ]
         for sev, n in self.counts().items():
-            lines.append(f"| {sev.capitalize()} | {n} |")
-        lines += ["", "## Findings", ""]
+            lines.append(f"| {_sev_label(sev)} | {n} |")
+        lines += ["", L("## Achados", "## Findings"), ""]
         if not self.findings:
-            lines.append("_No findings._")
+            lines.append(L("_Nenhum achado._", "_No findings._"))
         for f in self.sorted():
             lines += [
-                f"### [{f.severity}] {f.title}",
+                f"### [{_sev_label(f.severity.name)}] {f.title}",
                 "",
-                f"- **Module:** `{f.module}`",
-                f"- **Target:** `{f.target}`",
+                Lf("- **Módulo:** `{m}`", "- **Module:** `{m}`", m=f.module),
+                Lf("- **Alvo:** `{t}`", "- **Target:** `{t}`", t=f.target),
             ]
             if f.description:
                 lines += ["", f.description]
             if f.evidence:
-                lines += ["", "**Evidence:**", "", "```", f.evidence.strip(), "```"]
+                lines += [
+                    "",
+                    L("**Evidência:**", "**Evidence:**"),
+                    "",
+                    "```",
+                    f.evidence.strip(),
+                    "```",
+                ]
             if f.recommendation:
-                lines += ["", f"**Recommendation:** {f.recommendation}"]
+                lines += [
+                    "",
+                    Lf(
+                        "**Recomendação:** {r}",
+                        "**Recommendation:** {r}",
+                        r=f.recommendation,
+                    ),
+                ]
             if f.references:
-                lines += ["", "**References:**"] + [f"- {r}" for r in f.references]
+                lines += ["", L("**Referências:**", "**References:**")] + [
+                    f"- {r}" for r in f.references
+                ]
             lines.append("")
         return "\n".join(lines)
 
@@ -94,19 +126,19 @@ class Report:
             sev = f.severity.name
             rows.append(
                 f"<tr><td><span class='sev' style='background:{colors[sev]}'>"
-                f"{html.escape(str(f.severity))}</span></td>"
+                f"{html.escape(_sev_label(sev))}</span></td>"
                 f"<td>{html.escape(f.title)}</td>"
                 f"<td><code>{html.escape(f.module)}</code></td>"
                 f"<td><code>{html.escape(f.target)}</code></td>"
                 f"<td>{html.escape(f.recommendation)}</td></tr>"
             )
         summary = " · ".join(
-            f"{k.capitalize()}: {v}" for k, v in self.counts().items()
+            f"{_sev_label(k)}: {v}" for k, v in self.counts().items()
         )
         return f"""<!doctype html>
-<html lang="en"><head><meta charset="utf-8">
+<html lang="{L('pt-BR', 'en')}"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>ThurSec report — {html.escape(self.engagement)}</title>
+<title>{html.escape(Lf('Relatório ThurSec — {e}', 'ThurSec report — {e}', e=self.engagement))}</title>
 <style>
  body{{font:15px/1.5 system-ui,sans-serif;margin:0;background:#0f172a;color:#e2e8f0}}
  .wrap{{max-width:1000px;margin:0 auto;padding:32px 16px}}
@@ -117,9 +149,9 @@ class Report:
  .sev{{display:inline-block;padding:2px 8px;border-radius:4px;color:#fff;font-size:12px;font-weight:600}}
  code{{background:#1e293b;padding:1px 5px;border-radius:3px;font-size:13px}}
 </style></head><body><div class="wrap">
-<h1>ThurSec report</h1>
-<div class="meta">{html.escape(self.engagement)} — generated
+<h1>{L('Relatório ThurSec', 'ThurSec report')}</h1>
+<div class="meta">{html.escape(self.engagement)} — {L('gerado em', 'generated')}
 {html.escape(self.generated_at.isoformat(timespec='seconds'))}<br>{html.escape(summary)}</div>
-<table><thead><tr><th>Severity</th><th>Finding</th><th>Module</th><th>Target</th><th>Recommendation</th></tr></thead>
-<tbody>{''.join(rows) or '<tr><td colspan=5>No findings.</td></tr>'}</tbody></table>
+<table><thead><tr><th>{L('Severidade', 'Severity')}</th><th>{L('Achado', 'Finding')}</th><th>{L('Módulo', 'Module')}</th><th>{L('Alvo', 'Target')}</th><th>{L('Recomendação', 'Recommendation')}</th></tr></thead>
+<tbody>{''.join(rows) or f'<tr><td colspan=5>{L("Nenhum achado.", "No findings.")}</td></tr>'}</tbody></table>
 </div></body></html>"""

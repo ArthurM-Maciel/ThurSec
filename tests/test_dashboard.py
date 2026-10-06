@@ -2,9 +2,25 @@
 
 from __future__ import annotations
 
+import pytest
+
 from thursec.core.dashboard import render_dashboard
 from thursec.core.finding import Finding, Severity
+from thursec.core.i18n import set_lang
 from thursec.core.store import FindingStore
+
+
+@pytest.fixture(autouse=True)
+def _english_ui():
+    """Most assertions below check the English UI; pin the language and reset.
+
+    The default language is Portuguese, so without this the labels would come
+    out in PT. A dedicated test (``test_dashboard_renders_in_portuguese``)
+    exercises the PT default explicitly.
+    """
+    set_lang("en")
+    yield
+    set_lang("pt")
 
 
 def _store(tmp_path):
@@ -117,3 +133,22 @@ def test_dashboard_single_run_diff_message(tmp_path):
     html = render_dashboard(store, "t")
     assert "need at least two runs" in html
     assert "<svg" in html  # trend still renders for one run
+
+
+def test_dashboard_renders_in_portuguese(tmp_path):
+    """With the default (PT) language, labels come out in Portuguese."""
+    set_lang("pt")
+    store = _two_run_store(tmp_path)
+    html = render_dashboard(store, "t.example")
+    assert 'lang="pt-BR"' in html
+    assert "Painel de postura ThurSec" in html
+    assert "Postura atual — última execução" in html
+    assert "Tendência entre execuções" in html
+    assert "Última comparação" in html
+    assert "Achados — última execução" in html
+    # Section headers and severity labels are translated.
+    assert "Severidade" in html and "Recomendação" in html
+    assert "Crítico" in html  # escalated finding's new severity
+    # Still self-contained and script-free (anti-XSS / no-asset guarantee).
+    assert "<script" not in html
+    assert "http://" not in html and "https://" not in html

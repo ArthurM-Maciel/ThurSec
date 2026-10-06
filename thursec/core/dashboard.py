@@ -23,6 +23,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from .finding import Severity
+from .i18n import L, Lf
 from .store import FindingStore
 
 # Severity palette — kept in sync with report.Report.to_html() so a severity
@@ -47,6 +48,17 @@ SEVERITY_ACCENTS: dict[str, str] = {
 
 # Severity names, most-severe first (CRITICAL … INFO).
 _SEV_ORDER: list[str] = [s.name for s in reversed(Severity)]
+
+
+def _sev_label(name: str) -> str:
+    """Localized display label for a severity name (keys stay canonical)."""
+    return {
+        "CRITICAL": L("Crítico", "Critical"),
+        "HIGH": L("Alto", "High"),
+        "MEDIUM": L("Médio", "Medium"),
+        "LOW": L("Baixo", "Low"),
+        "INFO": L("Informativo", "Info"),
+    }.get(name.upper(), name.capitalize())
 
 
 class DashboardError(Exception):
@@ -88,7 +100,11 @@ def _render_trend_svg(runs_oldest_first: list[dict[str, Any]]) -> str:
     for an accessible, no-JS hover tooltip.
     """
     if not runs_oldest_first:
-        return "<p class='empty'>No runs to chart yet.</p>"
+        return (
+            "<p class='empty'>"
+            + L("Ainda não há execuções para o gráfico.", "No runs to chart yet.")
+            + "</p>"
+        )
 
     # Geometry.
     pad_left, pad_right, pad_top, pad_bottom = 44, 12, 12, 34
@@ -111,7 +127,7 @@ def _render_trend_svg(runs_oldest_first: list[dict[str, Any]]) -> str:
     parts: list[str] = [
         f"<svg viewBox='0 0 {width} {height}' width='100%' "
         f"preserveAspectRatio='xMidYMid meet' role='img' "
-        f"aria-label='Findings per run by severity' "
+        f"aria-label='{L('Achados por execução por severidade', 'Findings per run by severity')}' "
         f"style='max-width:{width}px'>"
     ]
 
@@ -141,7 +157,8 @@ def _render_trend_svg(runs_oldest_first: list[dict[str, Any]]) -> str:
             parts.append(
                 f"<rect x='{x}' y='{y_cursor:.1f}' width='{bar_w}' "
                 f"height='{seg_h:.1f}' fill='{SEVERITY_COLORS[sev]}'>"
-                f"<title>Run #{run['id']} — {sev.capitalize()}: {c}</title></rect>"
+                f"<title>{Lf('Execução nº{id} — ', 'Run #{id} — ', id=run['id'])}"
+                f"{_sev_label(sev)}: {c}</title></rect>"
             )
         # x-axis label: run id.
         parts.append(
@@ -160,7 +177,7 @@ def _render_legend() -> str:
         items.append(
             f"<span class='legend-item'><span class='swatch' "
             f"style='background:{SEVERITY_COLORS[sev]}'></span>"
-            f"{sev.capitalize()}</span>"
+            f"{_sev_label(sev)}</span>"
         )
     return "<div class='legend'>" + "".join(items) + "</div>"
 
@@ -170,7 +187,7 @@ def _render_tiles(counts: dict[str, int]) -> str:
     tiles = [
         "<div class='tile tile-total'>"
         f"<div class='tile-num'>{total}</div>"
-        "<div class='tile-label'>Total</div></div>"
+        f"<div class='tile-label'>{L('Total', 'Total')}</div></div>"
     ]
     for sev in _SEV_ORDER:
         n = counts[sev]
@@ -178,7 +195,7 @@ def _render_tiles(counts: dict[str, int]) -> str:
         tiles.append(
             f"<div class='tile{dim}' style='--accent:{SEVERITY_ACCENTS[sev]}'>"
             f"<div class='tile-num'>{n}</div>"
-            f"<div class='tile-label'>{sev.capitalize()}</div></div>"
+            f"<div class='tile-label'>{_sev_label(sev)}</div></div>"
         )
     return "<div class='tiles'>" + "".join(tiles) + "</div>"
 
@@ -186,8 +203,14 @@ def _render_tiles(counts: dict[str, int]) -> str:
 def _render_diff(diff: dict[str, Any]) -> str:
     if diff.get("run_a") is None:
         return (
-            "<p class='empty'>Only one run so far — need at least two runs of "
-            "this target to compute a diff.</p>"
+            "<p class='empty'>"
+            + L(
+                "Apenas uma execução até agora — são necessárias ao menos duas "
+                "execuções deste alvo para calcular uma comparação.",
+                "Only one run so far — need at least two runs of this target to "
+                "compute a diff.",
+            )
+            + "</p>"
         )
 
     new = diff.get("new", [])
@@ -196,7 +219,7 @@ def _render_diff(diff: dict[str, Any]) -> str:
 
     def finding_list(items: list[dict[str, Any]], sign: str) -> str:
         if not items:
-            return "<li class='none'>(none)</li>"
+            return f"<li class='none'>{L('(nenhum)', '(none)')}</li>"
         rows = []
         for f in sorted(items, key=lambda x: -int(x.get("severity_level", 0))):
             sev = str(f["severity"]).upper()
@@ -210,7 +233,7 @@ def _render_diff(diff: dict[str, Any]) -> str:
 
     def changed_list(items: list[dict[str, Any]]) -> str:
         if not items:
-            return "<li class='none'>(none)</li>"
+            return f"<li class='none'>{L('(nenhum)', '(none)')}</li>"
         rows = []
         for c in sorted(items, key=lambda x: -int(x.get("to_level", 0))):
             frm = str(c["from"]).upper()
@@ -219,20 +242,20 @@ def _render_diff(diff: dict[str, Any]) -> str:
                 "<li><span class='sign'>~</span>"
                 f"<span class='ftitle'>{html.escape(c['title'])}</span>"
                 f"<span class='change'>"
-                f"<span class='badge' style='background:{SEVERITY_COLORS.get(frm, '#334155')}'>{c['from'].capitalize()}</span>"
+                f"<span class='badge' style='background:{SEVERITY_COLORS.get(frm, '#334155')}'>{_sev_label(frm)}</span>"
                 f"<span class='arrow'>&rarr;</span>"
-                f"<span class='badge' style='background:{SEVERITY_COLORS.get(to, '#334155')}'>{c['to'].capitalize()}</span></span>"
+                f"<span class='badge' style='background:{SEVERITY_COLORS.get(to, '#334155')}'>{_sev_label(to)}</span></span>"
                 f"<span class='fmeta'>{html.escape(c['module'])} · {html.escape(c['target'])}</span></li>"
             )
         return "".join(rows)
 
     return (
         "<div class='diff-grid'>"
-        f"<div class='diff-col'><h3>New <span class='cnt'>{len(new)}</span></h3>"
+        f"<div class='diff-col'><h3>{L('Novos', 'New')} <span class='cnt'>{len(new)}</span></h3>"
         f"<ul class='diff-list new'>{finding_list(new, '+')}</ul></div>"
-        f"<div class='diff-col'><h3>Resolved <span class='cnt'>{len(resolved)}</span></h3>"
+        f"<div class='diff-col'><h3>{L('Resolvidos', 'Resolved')} <span class='cnt'>{len(resolved)}</span></h3>"
         f"<ul class='diff-list resolved'>{finding_list(resolved, '-')}</ul></div>"
-        f"<div class='diff-col'><h3>Changed severity <span class='cnt'>{len(changed)}</span></h3>"
+        f"<div class='diff-col'><h3>{L('Mudança de severidade', 'Changed severity')} <span class='cnt'>{len(changed)}</span></h3>"
         f"<ul class='diff-list changed'>{changed_list(changed)}</ul></div>"
         "</div>"
     )
@@ -240,21 +263,27 @@ def _render_diff(diff: dict[str, Any]) -> str:
 
 def _render_table(findings: list[dict[str, Any]]) -> str:
     if not findings:
-        return "<p class='empty'>No findings in the latest run.</p>"
+        return (
+            "<p class='empty'>"
+            + L("Nenhum achado na última execução.", "No findings in the latest run.")
+            + "</p>"
+        )
     rows = []
     for f in findings:  # store.get_findings already sorts by severity desc
         sev = str(f["severity"]).upper()
         rows.append(
             f"<tr><td><span class='sev' style='background:{SEVERITY_COLORS.get(sev, '#334155')}'>"
-            f"{html.escape(f['severity'].capitalize())}</span></td>"
+            f"{html.escape(_sev_label(sev))}</span></td>"
             f"<td>{html.escape(f['title'])}</td>"
             f"<td><code>{html.escape(f['module'])}</code></td>"
             f"<td><code>{html.escape(f['target'])}</code></td>"
             f"<td>{html.escape(f.get('recommendation', '') or '')}</td></tr>"
         )
     return (
-        "<table><thead><tr><th>Severity</th><th>Finding</th><th>Module</th>"
-        "<th>Target</th><th>Recommendation</th></tr></thead>"
+        f"<table><thead><tr><th>{L('Severidade', 'Severity')}</th>"
+        f"<th>{L('Achado', 'Finding')}</th><th>{L('Módulo', 'Module')}</th>"
+        f"<th>{L('Alvo', 'Target')}</th>"
+        f"<th>{L('Recomendação', 'Recommendation')}</th></tr></thead>"
         f"<tbody>{''.join(rows)}</tbody></table>"
     )
 
@@ -324,18 +353,38 @@ def render_dashboard(store: FindingStore, target: str | None = None) -> str:
 
     if resolved_target is None:
         return _page(
-            title="ThurSec posture",
-            subtitle=f"No runs recorded yet · generated {generated}",
-            body="<section><p class='empty'>This store has no runs. Run a scan "
-            "with <code>--store</code> to populate it.</p></section>",
+            title=L("Postura ThurSec", "ThurSec posture"),
+            subtitle=Lf(
+                "Nenhuma execução registrada ainda · gerado em {g}",
+                "No runs recorded yet · generated {g}",
+                g=generated,
+            ),
+            body="<section><p class='empty'>"
+            + L(
+                "Este repositório não tem execuções. Rode uma varredura com "
+                "<code>--store</code> para populá-lo.",
+                "This store has no runs. Run a scan with <code>--store</code> to "
+                "populate it.",
+            )
+            + "</p></section>",
         )
 
     runs = store.list_runs(target=resolved_target)
     if not runs:
         return _page(
-            title="ThurSec posture",
-            subtitle=f"{html.escape(resolved_target)} · no runs · generated {generated}",
-            body="<section><p class='empty'>No runs recorded for this target.</p></section>",
+            title=L("Postura ThurSec", "ThurSec posture"),
+            subtitle=Lf(
+                "{t} · sem execuções · gerado em {g}",
+                "{t} · no runs · generated {g}",
+                t=html.escape(resolved_target),
+                g=generated,
+            ),
+            body="<section><p class='empty'>"
+            + L(
+                "Nenhuma execução registrada para este alvo.",
+                "No runs recorded for this target.",
+            )
+            + "</p></section>",
         )
 
     latest = runs[0]
@@ -349,41 +398,53 @@ def render_dashboard(store: FindingStore, target: str | None = None) -> str:
 
     diff = store.diff_latest(resolved_target)
 
-    subtitle = (
-        f"{html.escape(resolved_target)} · {len(runs)} run(s) · "
-        f"latest run #{latest['id']} at {_fmt_ts(latest['finished_at'])} · "
-        f"generated {generated}"
+    subtitle = Lf(
+        "{t} · {n} execução(ões) · última execução nº{rid} em {ts} · "
+        "gerado em {g}",
+        "{t} · {n} run(s) · latest run #{rid} at {ts} · generated {g}",
+        t=html.escape(resolved_target),
+        n=len(runs),
+        rid=latest["id"],
+        ts=_fmt_ts(latest["finished_at"]),
+        g=generated,
     )
 
     if diff.get("run_a") is not None:
-        diff_heading = (
-            f"Latest diff (run #{diff['run_a']} &rarr; #{diff['run_b']})"
+        diff_heading = Lf(
+            "Última comparação (execução nº{a} &rarr; nº{b})",
+            "Latest diff (run #{a} &rarr; #{b})",
+            a=diff["run_a"],
+            b=diff["run_b"],
         )
     else:
-        diff_heading = "Latest diff"
+        diff_heading = L("Última comparação", "Latest diff")
 
     body = (
-        "<section><h2>Current posture — latest run</h2>"
+        f"<section><h2>{L('Postura atual — última execução', 'Current posture — latest run')}</h2>"
         f"{_render_tiles(counts)}</section>"
-        "<section><h2>Trend across runs</h2>"
+        f"<section><h2>{L('Tendência entre execuções', 'Trend across runs')}</h2>"
         f"<div class='card'>{_render_trend_svg(trend_runs)}{_render_legend()}</div>"
         "</section>"
         f"<section><h2>{diff_heading}</h2>{_render_diff(diff)}</section>"
-        "<section><h2>Findings — latest run</h2>"
+        f"<section><h2>{L('Achados — última execução', 'Findings — latest run')}</h2>"
         f"{_render_table(latest_findings)}</section>"
     )
 
-    return _page(title="ThurSec posture", subtitle=subtitle, body=body)
+    return _page(
+        title=L("Postura ThurSec", "ThurSec posture"),
+        subtitle=subtitle,
+        body=body,
+    )
 
 
 def _page(title: str, subtitle: str, body: str) -> str:
     return f"""<!doctype html>
-<html lang="en"><head><meta charset="utf-8">
+<html lang="{L('pt-BR', 'en')}"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{html.escape(title)}</title>
 <style>{_STYLE}</style></head>
 <body><div class="wrap">
-<h1>ThurSec posture dashboard</h1>
+<h1>{L('Painel de postura ThurSec', 'ThurSec posture dashboard')}</h1>
 <div class="meta">{subtitle}</div>
 {body}
 </div></body></html>"""
