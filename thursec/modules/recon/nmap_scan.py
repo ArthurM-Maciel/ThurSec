@@ -26,6 +26,7 @@ import xml.etree.ElementTree as ET
 
 from ...core.context import RunContext
 from ...core.finding import Finding, Severity
+from ...core.i18n import L, Lf
 from ...core.module import Category, Intensity, Module
 from ...core.runner import ToolNotFoundError
 from ...core.target import TargetError, validate_target
@@ -37,25 +38,52 @@ _DEFAULT_TIMEOUT = 600.0  # seconds
 
 # Service versions we flag as clearly obsolete/risky. Kept deliberately small
 # and conservative: a match only nudges INFO -> LOW with a recommendation.
-_RISKY_SERVICES: dict[str, str] = {
-    "telnet": "Telnet transmits credentials in cleartext; replace it with SSH.",
-    "ftp": "Plain FTP is unencrypted; prefer SFTP/FTPS or disable it.",
-    "rlogin": "The r-services are insecure legacy protocols; disable them.",
-    "rsh": "The r-services are insecure legacy protocols; disable them.",
-    "vnc": "Expose VNC only over a VPN/SSH tunnel, never directly to the internet.",
+# Each value is a (pt, en) pair, localized at the call site so the language
+# toggle applies at runtime rather than at import time.
+_RISKY_SERVICES: dict[str, tuple[str, str]] = {
+    "telnet": (
+        "O Telnet transmite credenciais em texto puro; substitua-o por SSH.",
+        "Telnet transmits credentials in cleartext; replace it with SSH.",
+    ),
+    "ftp": (
+        "O FTP puro não é criptografado; prefira SFTP/FTPS ou desative-o.",
+        "Plain FTP is unencrypted; prefer SFTP/FTPS or disable it.",
+    ),
+    "rlogin": (
+        "Os r-services são protocolos legados inseguros; desative-os.",
+        "The r-services are insecure legacy protocols; disable them.",
+    ),
+    "rsh": (
+        "Os r-services são protocolos legados inseguros; desative-os.",
+        "The r-services are insecure legacy protocols; disable them.",
+    ),
+    "vnc": (
+        "Exponha o VNC apenas através de um túnel VPN/SSH, nunca diretamente na "
+        "internet.",
+        "Expose VNC only over a VPN/SSH tunnel, never directly to the internet.",
+    ),
 }
 
 
 class NmapScan(Module):
     id = "recon.nmap"
-    name = "Nmap port & service scan"
     category = Category.RECON
     intensity = Intensity.ACTIVE
-    description = (
-        "TCP connect port scan with service/version detection via nmap. "
-        "Non-intrusive defaults (-sT -sV -T3 --top-ports); scope-gated."
-    )
     requires_tools = ("nmap",)
+
+    @property
+    def name(self) -> str:
+        return L("Varredura de portas e serviços com Nmap", "Nmap port & service scan")
+
+    @property
+    def description(self) -> str:
+        return L(
+            "Varredura de portas TCP connect com detecção de serviço/versão via "
+            "nmap. Padrões não intrusivos (-sT -sV -T3 --top-ports); restrito a "
+            "escopo.",
+            "TCP connect port scan with service/version detection via nmap. "
+            "Non-intrusive defaults (-sT -sV -T3 --top-ports); scope-gated.",
+        )
 
     async def run(self, ctx: RunContext) -> list[Finding]:
         # Security gate: a target that looks like a flag (e.g. "-sS",
@@ -68,16 +96,23 @@ class NmapScan(Module):
             return [
                 ctx.finding(
                     self.id,
-                    "Refusing to scan: unsafe/invalid target",
+                    L(
+                        "Recusando-se a escanear: alvo inseguro/inválido",
+                        "Refusing to scan: unsafe/invalid target",
+                    ),
                     Severity.LOW,
-                    description=(
+                    description=L(
+                        "O alvo foi rejeitado antes de executar o nmap por estar "
+                        "vazio, malformado, ou por poder ser interpretado como uma "
+                        "flag de linha de comando (injeção de argumentos).",
                         "The target was rejected before running nmap because it "
                         "is empty, malformed, or could be interpreted as a "
-                        "command-line flag (argument injection)."
+                        "command-line flag (argument injection).",
                     ),
                     evidence=str(e),
-                    recommendation=(
-                        "Provide a bare hostname, IP address, CIDR network or URL."
+                    recommendation=L(
+                        "Forneça um hostname puro, endereço IP, rede CIDR ou URL.",
+                        "Provide a bare hostname, IP address, CIDR network or URL.",
                     ),
                     metadata={"target": ctx.target},
                 )
@@ -92,16 +127,20 @@ class NmapScan(Module):
             return [
                 ctx.finding(
                     self.id,
-                    "nmap not installed",
+                    L("nmap não instalado", "nmap not installed"),
                     Severity.INFO,
-                    description=(
+                    description=L(
+                        "O binário do nmap não foi encontrado no PATH, então a "
+                        "varredura de portas foi ignorada.",
                         "The nmap binary was not found on PATH, so the port scan "
-                        "was skipped."
+                        "was skipped.",
                     ),
                     evidence=str(e),
-                    recommendation=(
+                    recommendation=L(
+                        "Instale o nmap (ex.: 'brew install nmap', "
+                        "'apt install nmap') e execute este módulo novamente.",
                         "Install nmap (e.g. 'brew install nmap', "
-                        "'apt install nmap') and re-run this module."
+                        "'apt install nmap') and re-run this module.",
                     ),
                     references=["https://nmap.org/"],
                     metadata={"target": target},
@@ -112,16 +151,26 @@ class NmapScan(Module):
             return [
                 ctx.finding(
                     self.id,
-                    f"nmap scan timed out after {timeout:g}s",
+                    Lf(
+                        "varredura nmap expirou após {timeout:g}s",
+                        "nmap scan timed out after {timeout:g}s",
+                        timeout=timeout,
+                    ),
                     Severity.LOW,
-                    description=(
-                        f"The nmap scan of {target} did not finish within "
-                        f"{timeout:g} seconds and was terminated."
+                    description=Lf(
+                        "A varredura nmap de {target} não terminou em {timeout:g} "
+                        "segundos e foi encerrada.",
+                        "The nmap scan of {target} did not finish within "
+                        "{timeout:g} seconds and was terminated.",
+                        target=target,
+                        timeout=timeout,
                     ),
                     evidence=" ".join(args),
-                    recommendation=(
+                    recommendation=L(
+                        "Aumente options['timeout'], reduza options['top_ports'] ou "
+                        "escaneie menos hosts.",
                         "Increase options['timeout'], reduce options['top_ports'], "
-                        "or scan fewer hosts."
+                        "or scan fewer hosts.",
                     ),
                     metadata={"target": target, "timeout": timeout},
                 )
@@ -131,12 +180,22 @@ class NmapScan(Module):
             return [
                 ctx.finding(
                     self.id,
-                    f"nmap exited with status {result.returncode}",
+                    Lf(
+                        "nmap encerrou com status {code}",
+                        "nmap exited with status {code}",
+                        code=result.returncode,
+                    ),
                     Severity.LOW,
-                    description=f"nmap did not complete successfully for {target}.",
+                    description=Lf(
+                        "O nmap não foi concluído com sucesso para {target}.",
+                        "nmap did not complete successfully for {target}.",
+                        target=target,
+                    ),
                     evidence=(result.stderr or result.stdout or "").strip()[:500],
-                    recommendation=(
-                        "Check the target syntax and your privileges, then retry."
+                    recommendation=L(
+                        "Verifique a sintaxe do alvo e seus privilégios e tente "
+                        "novamente.",
+                        "Check the target syntax and your privileges, then retry.",
                     ),
                     metadata={"target": target, "returncode": result.returncode},
                 )
@@ -148,11 +207,22 @@ class NmapScan(Module):
             return [
                 ctx.finding(
                     self.id,
-                    "Could not parse nmap XML output",
+                    L(
+                        "Não foi possível fazer o parse da saída XML do nmap",
+                        "Could not parse nmap XML output",
+                    ),
                     Severity.LOW,
-                    description=f"The nmap XML output for {target} was not parseable.",
+                    description=Lf(
+                        "A saída XML do nmap para {target} não pôde ser analisada.",
+                        "The nmap XML output for {target} was not parseable.",
+                        target=target,
+                    ),
                     evidence=f"{type(e).__name__}: {e}",
-                    recommendation="Re-run the scan; the output may have been truncated.",
+                    recommendation=L(
+                        "Execute a varredura novamente; a saída pode ter sido "
+                        "truncada.",
+                        "Re-run the scan; the output may have been truncated.",
+                    ),
                     metadata={"target": target},
                 )
             ]
@@ -170,11 +240,18 @@ class NmapScan(Module):
             return [
                 ctx.finding(
                     self.id,
-                    f"Host {target} appears to be down",
+                    Lf(
+                        "Host {target} parece estar inativo (down)",
+                        "Host {target} appears to be down",
+                        target=target,
+                    ),
                     Severity.INFO,
-                    description=(
-                        f"nmap reported no hosts up for {target} "
-                        "(host down, filtered, or unreachable)."
+                    description=Lf(
+                        "O nmap não reportou nenhum host ativo para {target} "
+                        "(host inativo, filtrado ou inacessível).",
+                        "nmap reported no hosts up for {target} "
+                        "(host down, filtered, or unreachable).",
+                        target=target,
                     ),
                     metadata={"target": target, "hosts_up": 0},
                 )
@@ -184,11 +261,18 @@ class NmapScan(Module):
             return [
                 ctx.finding(
                     self.id,
-                    f"Host {target} up — no open ports found",
+                    Lf(
+                        "Host {target} ativo — nenhuma porta aberta encontrada",
+                        "Host {target} up — no open ports found",
+                        target=target,
+                    ),
                     Severity.INFO,
-                    description=(
-                        f"{len(up)} host(s) responded but no open ports were found "
-                        "among those scanned."
+                    description=Lf(
+                        "{n} host(s) responderam, mas nenhuma porta aberta foi "
+                        "encontrada entre as escaneadas.",
+                        "{n} host(s) responded but no open ports were found "
+                        "among those scanned.",
+                        n=len(up),
                     ),
                     metadata={"target": target, "hosts_up": len(up)},
                 )
@@ -204,9 +288,14 @@ class NmapScan(Module):
             part for part in (port.product, port.version) if part
         ).strip()
         service_label = port.service or "unknown"
+        open_port = Lf(
+            "Porta aberta {port}/{proto}",
+            "Open port {port}/{proto}",
+            port=port.port,
+            proto=port.protocol,
+        )
         title = (
-            f"Open port {port.port}/{port.protocol} — {service_label}"
-            + (f" {svc_desc}" if svc_desc else "")
+            f"{open_port} — {service_label}" + (f" {svc_desc}" if svc_desc else "")
         )
 
         severity = Severity.INFO
@@ -214,7 +303,7 @@ class NmapScan(Module):
         risky_hint = _RISKY_SERVICES.get(service_label.lower())
         if risky_hint:
             severity = Severity.LOW
-            recommendation = risky_hint
+            recommendation = L(*risky_hint)
 
         metadata = {
             "host": host.address,
@@ -226,16 +315,25 @@ class NmapScan(Module):
             "state": port.state,
         }
         evidence = _evidence_line(host, port)
+        description = Lf(
+            "A porta {port}/{proto} está aberta em {addr}",
+            "Port {port}/{proto} is open on {addr}",
+            port=port.port,
+            proto=port.protocol,
+            addr=host.address,
+        )
+        if service_label != "unknown":
+            description += Lf(
+                " executando {svc}", " running {svc}", svc=service_label
+            )
+        if svc_desc:
+            description += f" ({svc_desc})"
+        description += "."
         return ctx.finding(
             self.id,
             title,
             severity,
-            description=(
-                f"Port {port.port}/{port.protocol} is open on {host.address}"
-                + (f" running {service_label}" if service_label != "unknown" else "")
-                + (f" ({svc_desc})" if svc_desc else "")
-                + "."
-            ),
+            description=description,
             evidence=evidence,
             recommendation=recommendation,
             metadata=metadata,

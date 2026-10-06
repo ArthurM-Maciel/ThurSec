@@ -35,6 +35,7 @@ from urllib.parse import urlparse
 
 from ...core.context import RunContext
 from ...core.finding import Finding, Severity
+from ...core.i18n import L, Lf
 from ...core.module import Category, Intensity, Module
 from ...core.target import TargetError, validate_target
 
@@ -65,15 +66,25 @@ _MAX_CONCURRENCY = 50
 
 class LoadTest(Module):
     id = "resilience.load_test"
-    name = "Resilience / load test"
     category = Category.RESILIENCE
     intensity = Intensity.INTRUSIVE
-    description = (
-        "Controlled HTTP GET load test to measure how your OWN authorized "
-        "infrastructure behaves under load. Requires an explicit max_rps and is "
-        "hard-capped on rate and duration, with an automatic error-rate "
-        "kill-switch. GET-only (never changes state)."
-    )
+
+    @property
+    def name(self) -> str:
+        return L("Teste de resiliência / carga", "Resilience / load test")
+
+    @property
+    def description(self) -> str:
+        return L(
+            "Teste de carga HTTP GET controlado para medir como a SUA própria "
+            "infraestrutura autorizada se comporta sob carga. Exige um max_rps "
+            "explícito e tem limites rígidos de taxa e duração, com um kill-switch "
+            "automático por taxa de erro. Somente GET (nunca altera estado).",
+            "Controlled HTTP GET load test to measure how your OWN authorized "
+            "infrastructure behaves under load. Requires an explicit max_rps and is "
+            "hard-capped on rate and duration, with an automatic error-rate "
+            "kill-switch. GET-only (never changes state).",
+        )
 
     async def run(self, ctx: RunContext) -> list[Finding]:
         # 1) Argument-injection / invalid-target guard — refuse BEFORE any load.
@@ -83,15 +94,24 @@ class LoadTest(Module):
             return [
                 ctx.finding(
                     self.id,
-                    "Refusing to run: unsafe/invalid target",
+                    L(
+                        "Recusando-se a executar: alvo inseguro/inválido",
+                        "Refusing to run: unsafe/invalid target",
+                    ),
                     Severity.LOW,
-                    description=(
+                    description=L(
+                        "O alvo foi rejeitado antes de qualquer tráfego por não ser "
+                        "um host/URL válido e por poder ser lido como uma opção de "
+                        "linha de comando.",
                         "The target was rejected before any traffic because it is "
                         "not a valid host/URL and could be read as a command-line "
-                        "option."
+                        "option.",
                     ),
                     evidence=str(e),
-                    recommendation="Provide a plain hostname, IP, or URL you own.",
+                    recommendation=L(
+                        "Forneça um hostname, IP ou URL simples que você possua.",
+                        "Provide a plain hostname, IP, or URL you own.",
+                    ),
                 )
             ]
 
@@ -101,16 +121,25 @@ class LoadTest(Module):
             return [
                 ctx.finding(
                     self.id,
-                    "Refusing to run: no RPS ceiling provided",
+                    L(
+                        "Recusando-se a executar: nenhum limite de RPS fornecido",
+                        "Refusing to run: no RPS ceiling provided",
+                    ),
                     Severity.LOW,
-                    description=(
+                    description=Lf(
+                        "Um teste de carga precisa ser limitado. O operador deve "
+                        "definir options['max_rps'] como um inteiro entre 1 e "
+                        "{hard}. Nenhum tráfego foi gerado.",
                         "A load test must be bounded. The operator must set "
                         "options['max_rps'] to an integer between 1 and "
-                        f"{_HARD_MAX_RPS}. No traffic was generated."
+                        "{hard}. No traffic was generated.",
+                        hard=_HARD_MAX_RPS,
                     ),
-                    recommendation=(
-                        f"Re-run with a max_rps of 1..{_HARD_MAX_RPS}, e.g. "
-                        "max_rps=20."
+                    recommendation=Lf(
+                        "Execute novamente com um max_rps de 1..{hard}, por exemplo "
+                        "max_rps=20.",
+                        "Re-run with a max_rps of 1..{hard}, e.g. max_rps=20.",
+                        hard=_HARD_MAX_RPS,
                     ),
                     metadata={"hard_max_rps": _HARD_MAX_RPS},
                 )
@@ -119,15 +148,28 @@ class LoadTest(Module):
             return [
                 ctx.finding(
                     self.id,
-                    "Refusing to run: requested RPS exceeds hard ceiling",
+                    L(
+                        "Recusando-se a executar: RPS solicitado excede o limite "
+                        "rígido",
+                        "Refusing to run: requested RPS exceeds hard ceiling",
+                    ),
                     Severity.LOW,
-                    description=(
-                        f"Requested max_rps={rps} is above the hard ceiling of "
-                        f"{_HARD_MAX_RPS} req/s. This cap is non-negotiable; no "
-                        "traffic was generated."
+                    description=Lf(
+                        "O max_rps={rps} solicitado está acima do limite rígido de "
+                        "{hard} req/s. Esse teto é inegociável; nenhum tráfego foi "
+                        "gerado.",
+                        "Requested max_rps={rps} is above the hard ceiling of "
+                        "{hard} req/s. This cap is non-negotiable; no "
+                        "traffic was generated.",
+                        rps=rps,
+                        hard=_HARD_MAX_RPS,
                     ),
                     evidence=f"max_rps={rps} > _HARD_MAX_RPS={_HARD_MAX_RPS}",
-                    recommendation=f"Lower max_rps to at most {_HARD_MAX_RPS}.",
+                    recommendation=Lf(
+                        "Reduza o max_rps para no máximo {hard}.",
+                        "Lower max_rps to at most {hard}.",
+                        hard=_HARD_MAX_RPS,
+                    ),
                     metadata={"requested_rps": rps, "hard_max_rps": _HARD_MAX_RPS},
                 )
             ]
@@ -139,15 +181,22 @@ class LoadTest(Module):
                 return [
                     ctx.finding(
                         self.id,
-                        "Refusing to run: invalid duration",
-                        Severity.LOW,
-                        description=(
-                            "options['duration_s'] must be an integer between 1 "
-                            f"and {_HARD_MAX_DURATION} seconds. No traffic was "
-                            "generated."
+                        L(
+                            "Recusando-se a executar: duração inválida",
+                            "Refusing to run: invalid duration",
                         ),
-                        recommendation=(
-                            f"Provide duration_s in 1..{_HARD_MAX_DURATION}."
+                        Severity.LOW,
+                        description=Lf(
+                            "options['duration_s'] deve ser um inteiro entre 1 e "
+                            "{hard} segundos. Nenhum tráfego foi gerado.",
+                            "options['duration_s'] must be an integer between 1 "
+                            "and {hard} seconds. No traffic was generated.",
+                            hard=_HARD_MAX_DURATION,
+                        ),
+                        recommendation=Lf(
+                            "Forneça duration_s em 1..{hard}.",
+                            "Provide duration_s in 1..{hard}.",
+                            hard=_HARD_MAX_DURATION,
                         ),
                         metadata={"hard_max_duration": _HARD_MAX_DURATION},
                     )
@@ -156,19 +205,29 @@ class LoadTest(Module):
                 return [
                     ctx.finding(
                         self.id,
-                        "Refusing to run: duration exceeds hard ceiling",
+                        L(
+                            "Recusando-se a executar: duração excede o limite rígido",
+                            "Refusing to run: duration exceeds hard ceiling",
+                        ),
                         Severity.LOW,
-                        description=(
-                            f"Requested duration_s={duration} is above the hard "
-                            f"ceiling of {_HARD_MAX_DURATION}s. This cap is "
-                            "non-negotiable; no traffic was generated."
+                        description=Lf(
+                            "O duration_s={duration} solicitado está acima do limite "
+                            "rígido de {hard}s. Esse teto é inegociável; nenhum "
+                            "tráfego foi gerado.",
+                            "Requested duration_s={duration} is above the hard "
+                            "ceiling of {hard}s. This cap is "
+                            "non-negotiable; no traffic was generated.",
+                            duration=duration,
+                            hard=_HARD_MAX_DURATION,
                         ),
                         evidence=(
                             f"duration_s={duration} > "
                             f"_HARD_MAX_DURATION={_HARD_MAX_DURATION}"
                         ),
-                        recommendation=(
-                            f"Lower duration_s to at most {_HARD_MAX_DURATION}."
+                        recommendation=Lf(
+                            "Reduza o duration_s para no máximo {hard}.",
+                            "Lower duration_s to at most {hard}.",
+                            hard=_HARD_MAX_DURATION,
                         ),
                         metadata={
                             "requested_duration": duration,
@@ -277,11 +336,16 @@ class LoadTest(Module):
             return [
                 ctx.finding(
                     self.id,
-                    "Load test generated no completed requests",
+                    L(
+                        "O teste de carga não gerou nenhuma requisição concluída",
+                        "Load test generated no completed requests",
+                    ),
                     Severity.INFO,
-                    description=(
+                    description=L(
+                        "Nenhuma requisição foi concluída dentro da janela. O alvo "
+                        "pode estar inacessível neste host/porta.",
                         "No requests completed within the window. The target may "
-                        "be unreachable on this host/port."
+                        "be unreachable on this host/port.",
                     ),
                     metadata={"target_max_rps": rps, "duration_s": duration},
                 )
@@ -304,17 +368,25 @@ class LoadTest(Module):
             "latency_p99_s": round(p99, 4),
             "aborted": stats.aborted,
         }
-        summary = (
-            f"{stats.total} GET requests, {effective_rps:.1f} eff. req/s, "
-            f"error rate {error_rate:.1%}, "
-            f"latency p50/p90/p99 = {p50*1000:.0f}/{p90*1000:.0f}/"
-            f"{p99*1000:.0f} ms"
+        summary = Lf(
+            "{total} requisições GET, {rps:.1f} req/s efetivas, "
+            "taxa de erro {er:.1%}, "
+            "latência p50/p90/p99 = {p50:.0f}/{p90:.0f}/{p99:.0f} ms",
+            "{total} GET requests, {rps:.1f} eff. req/s, "
+            "error rate {er:.1%}, "
+            "latency p50/p90/p99 = {p50:.0f}/{p90:.0f}/{p99:.0f} ms",
+            total=stats.total,
+            rps=effective_rps,
+            er=error_rate,
+            p50=p50 * 1000,
+            p90=p90 * 1000,
+            p99=p99 * 1000,
         )
 
         findings: list[Finding] = [
             ctx.finding(
                 self.id,
-                "Load test summary",
+                L("Resumo do teste de carga", "Load test summary"),
                 Severity.INFO,
                 description=summary,
                 evidence=(
@@ -329,21 +401,32 @@ class LoadTest(Module):
             findings.append(
                 ctx.finding(
                     self.id,
-                    "Load test aborted by kill-switch",
+                    L(
+                        "Teste de carga abortado pelo kill-switch",
+                        "Load test aborted by kill-switch",
+                    ),
                     Severity.HIGH,
-                    description=(
+                    description=Lf(
+                        "O kill-switch automático disparou: a taxa de erro recente "
+                        "({rate:.1%}) excedeu o limiar de {thr:.0%}, então o teste "
+                        "parou mais cedo para evitar acumular carga sobre um alvo "
+                        "em falha.",
                         "The automatic kill-switch tripped: the recent error rate "
-                        f"({stats.abort_error_rate:.1%}) exceeded the "
-                        f"{_KILL_ERROR_RATE:.0%} threshold, so the test stopped "
-                        "early to avoid piling load onto a failing target."
+                        "({rate:.1%}) exceeded the "
+                        "{thr:.0%} threshold, so the test stopped "
+                        "early to avoid piling load onto a failing target.",
+                        rate=stats.abort_error_rate,
+                        thr=_KILL_ERROR_RATE,
                     ),
                     evidence=(
                         f"window error rate {stats.abort_error_rate:.1%} > "
                         f"{_KILL_ERROR_RATE:.0%} after {stats.total} requests"
                     ),
-                    recommendation=(
+                    recommendation=L(
+                        "O alvo está falhando sob esta carga. Investigue "
+                        "capacidade/saúde antes de testar novamente nesta taxa.",
                         "The target is failing under this load. Investigate "
-                        "capacity/health before testing again at this rate."
+                        "capacity/health before testing again at this rate.",
                     ),
                     metadata=metadata,
                 )
@@ -352,16 +435,25 @@ class LoadTest(Module):
             findings.append(
                 ctx.finding(
                     self.id,
-                    "Target showed degradation under load",
+                    L(
+                        "O alvo apresentou degradação sob carga",
+                        "Target showed degradation under load",
+                    ),
                     Severity.HIGH,
-                    description=(
-                        f"The target returned a high error rate ({error_rate:.1%}) "
-                        f"while serving ~{effective_rps:.0f} req/s."
+                    description=Lf(
+                        "O alvo retornou uma alta taxa de erro ({er:.1%}) enquanto "
+                        "atendia ~{rps:.0f} req/s.",
+                        "The target returned a high error rate ({er:.1%}) "
+                        "while serving ~{rps:.0f} req/s.",
+                        er=error_rate,
+                        rps=effective_rps,
                     ),
                     evidence=f"errors {stats.errors}/{stats.total}",
-                    recommendation=(
+                    recommendation=L(
+                        "Revise a capacidade do servidor, os timeouts e o "
+                        "autoscaling nesta taxa de requisições.",
                         "Review server capacity, timeouts and autoscaling at this "
-                        "request rate."
+                        "request rate.",
                     ),
                     metadata=metadata,
                 )
@@ -370,17 +462,26 @@ class LoadTest(Module):
             findings.append(
                 ctx.finding(
                     self.id,
-                    "Target showed degradation under load",
+                    L(
+                        "O alvo apresentou degradação sob carga",
+                        "Target showed degradation under load",
+                    ),
                     Severity.MEDIUM,
-                    description=(
-                        f"The target returned an elevated error rate "
-                        f"({error_rate:.1%}) while serving ~{effective_rps:.0f} "
-                        "req/s."
+                    description=Lf(
+                        "O alvo retornou uma taxa de erro elevada ({er:.1%}) "
+                        "enquanto atendia ~{rps:.0f} req/s.",
+                        "The target returned an elevated error rate "
+                        "({er:.1%}) while serving ~{rps:.0f} "
+                        "req/s.",
+                        er=error_rate,
+                        rps=effective_rps,
                     ),
                     evidence=f"errors {stats.errors}/{stats.total}",
-                    recommendation=(
+                    recommendation=L(
+                        "Investigue as respostas com falha; o alvo pode estar se "
+                        "aproximando do seu limite de capacidade.",
                         "Investigate the failing responses; the target may be "
-                        "approaching its capacity limit."
+                        "approaching its capacity limit.",
                     ),
                     metadata=metadata,
                 )

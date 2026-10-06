@@ -17,6 +17,7 @@ import urllib.request
 
 from ...core.context import RunContext
 from ...core.finding import Finding, Severity
+from ...core.i18n import L, Lf
 from ...core.module import Category, Intensity, Module
 
 _DOH_URL = "https://cloudflare-dns.com/dns-query"
@@ -31,13 +32,22 @@ _EVIDENCE_LIMIT = 25
 
 class DnsEnum(Module):
     id = "recon.dns"
-    name = "DNS enumeration (DoH)"
     category = Category.RECON
     intensity = Intensity.PASSIVE
-    description = (
-        "Enumerate DNS records (A/AAAA/MX/NS/TXT/CNAME) and check SPF/DMARC "
-        "hygiene via a public DNS-over-HTTPS resolver — no packets to the target."
-    )
+
+    @property
+    def name(self) -> str:
+        return L("Enumeração de DNS (DoH)", "DNS enumeration (DoH)")
+
+    @property
+    def description(self) -> str:
+        return L(
+            "Enumera registros DNS (A/AAAA/MX/NS/TXT/CNAME) e verifica a higiene "
+            "de SPF/DMARC via um resolver público de DNS-over-HTTPS — sem enviar "
+            "pacotes ao alvo.",
+            "Enumerate DNS records (A/AAAA/MX/NS/TXT/CNAME) and check SPF/DMARC "
+            "hygiene via a public DNS-over-HTTPS resolver — no packets to the target.",
+        )
 
     async def run(self, ctx: RunContext) -> list[Finding]:
         domain = _normalize_domain(ctx.target)
@@ -58,11 +68,21 @@ class DnsEnum(Module):
                 findings.append(
                     ctx.finding(
                         self.id,
-                        f"{rtype} records for {domain}",
+                        Lf(
+                            "Registros {rtype} de {domain}",
+                            "{rtype} records for {domain}",
+                            rtype=rtype,
+                            domain=domain,
+                        ),
                         Severity.INFO,
-                        description=(
-                            f"Found {len(records)} {rtype} record(s) for {domain} "
-                            "via DNS-over-HTTPS."
+                        description=Lf(
+                            "Encontrado(s) {n} registro(s) {rtype} de {domain} "
+                            "via DNS-over-HTTPS.",
+                            "Found {n} {rtype} record(s) for {domain} "
+                            "via DNS-over-HTTPS.",
+                            n=len(records),
+                            rtype=rtype,
+                            domain=domain,
                         ),
                         evidence=_evidence(records),
                         references=["https://developers.cloudflare.com/1.1.1.1/"],
@@ -82,19 +102,32 @@ class DnsEnum(Module):
                 findings.append(
                     ctx.finding(
                         self.id,
-                        f"No SPF record published for {domain}",
+                        Lf(
+                            "Nenhum registro SPF publicado para {domain}",
+                            "No SPF record published for {domain}",
+                            domain=domain,
+                        ),
                         Severity.LOW,
-                        description=(
-                            f"No TXT record containing an SPF policy (v=spf1) was "
-                            f"found for {domain}. Without SPF, receivers cannot verify "
+                        description=Lf(
+                            "Nenhum registro TXT contendo uma política SPF (v=spf1) "
+                            "foi encontrado para {domain}. Sem SPF, os receptores não "
+                            "conseguem verificar quais hosts estão autorizados a enviar "
+                            "e-mails deste domínio, facilitando a falsificação "
+                            "(spoofing).",
+                            "No TXT record containing an SPF policy (v=spf1) was "
+                            "found for {domain}. Without SPF, receivers cannot verify "
                             "which hosts are authorised to send mail for this domain, "
-                            "making spoofing easier."
+                            "making spoofing easier.",
+                            domain=domain,
                         ),
                         evidence="\n".join(txt) or "(no TXT records)",
-                        recommendation=(
+                        recommendation=L(
+                            "Publique um registro SPF, por exemplo um registro TXT "
+                            '"v=spf1 include:_spf.seuprovedor.com -all" que lista '
+                            "todos os remetentes autorizados e termina em -all (ou ~all).",
                             "Publish an SPF record, e.g. a TXT record "
                             '"v=spf1 include:_spf.yourprovider.com -all" that lists '
-                            "every authorised sender and ends in -all (or ~all)."
+                            "every authorised sender and ends in -all (or ~all).",
                         ),
                         references=["https://www.rfc-editor.org/rfc/rfc7208"],
                         metadata={"domain": domain, "type": "TXT", "check": "spf"},
@@ -114,19 +147,33 @@ class DnsEnum(Module):
             findings.append(
                 ctx.finding(
                     self.id,
-                    f"No DMARC record published for {domain}",
+                    Lf(
+                        "Nenhum registro DMARC publicado para {domain}",
+                        "No DMARC record published for {domain}",
+                        domain=domain,
+                    ),
                     Severity.LOW,
-                    description=(
-                        f"No TXT record containing a DMARC policy (v=DMARC1) was "
-                        f"found at {dmarc_name}. Without DMARC, there is no published "
+                    description=Lf(
+                        "Nenhum registro TXT contendo uma política DMARC (v=DMARC1) "
+                        "foi encontrado em {dmarc_name}. Sem DMARC, não há política "
+                        "publicada dizendo aos receptores como tratar e-mails que "
+                        "falham em SPF ou DKIM, nem qualquer relatório de abuso.",
+                        "No TXT record containing a DMARC policy (v=DMARC1) was "
+                        "found at {dmarc_name}. Without DMARC, there is no published "
                         "policy telling receivers how to handle mail that fails SPF "
-                        "or DKIM, nor any reporting of abuse."
+                        "or DKIM, nor any reporting of abuse.",
+                        dmarc_name=dmarc_name,
                     ),
                     evidence="\n".join(dmarc) or "(no TXT records)",
-                    recommendation=(
-                        f"Publish a DMARC record as a TXT record at {dmarc_name}, "
+                    recommendation=Lf(
+                        "Publique um registro DMARC como registro TXT em {dmarc_name}, "
+                        'por exemplo "v=DMARC1; p=reject; rua=mailto:dmarc@seudominio". '
+                        "Comece com p=none para monitorar e depois endureça para "
+                        "quarantine/reject.",
+                        "Publish a DMARC record as a TXT record at {dmarc_name}, "
                         'e.g. "v=DMARC1; p=reject; rua=mailto:dmarc@yourdomain". Start '
-                        "with p=none to monitor, then tighten to quarantine/reject."
+                        "with p=none to monitor, then tighten to quarantine/reject.",
+                        dmarc_name=dmarc_name,
                     ),
                     references=["https://www.rfc-editor.org/rfc/rfc7489"],
                     metadata={"domain": domain, "type": "TXT", "check": "dmarc"},
@@ -140,15 +187,25 @@ class DnsEnum(Module):
     ) -> Finding:
         return ctx.finding(
             self.id,
-            f"Could not resolve {rtype} record for {name}",
+            Lf(
+                "Não foi possível resolver o registro {rtype} de {name}",
+                "Could not resolve {rtype} record for {name}",
+                rtype=rtype,
+                name=name,
+            ),
             Severity.LOW,
-            description=(
-                f"The DNS-over-HTTPS lookup of {name} ({rtype}) did not complete."
+            description=Lf(
+                "A consulta DNS-over-HTTPS de {name} ({rtype}) não foi concluída.",
+                "The DNS-over-HTTPS lookup of {name} ({rtype}) did not complete.",
+                name=name,
+                rtype=rtype,
             ),
             evidence=f"{type(exc).__name__}: {exc}",
-            recommendation=(
+            recommendation=L(
+                "Tente novamente mais tarde ou use outro resolver DoH; o resolver "
+                "pode estar temporariamente inacessível ou com limite de requisições.",
                 "Retry later or try another DoH resolver; the resolver may be "
-                "temporarily unreachable or rate-limited."
+                "temporarily unreachable or rate-limited.",
             ),
             references=["https://developers.cloudflare.com/1.1.1.1/"],
             metadata={"name": name, "type": rtype},

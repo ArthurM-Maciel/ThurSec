@@ -14,6 +14,7 @@ import urllib.request
 
 from ...core.context import RunContext
 from ...core.finding import Finding, Severity
+from ...core.i18n import L, Lf
 from ...core.module import Category, Intensity, Module
 
 _CRT_SH_URL = "https://crt.sh/?q=%25.{domain}&output=json"
@@ -27,12 +28,23 @@ _EVIDENCE_LIMIT = 20
 
 class CtSubdomains(Module):
     id = "recon.ct_subdomains"
-    name = "Certificate Transparency subdomains"
     category = Category.RECON
     intensity = Intensity.PASSIVE
-    description = (
-        "Enumerate subdomains from public Certificate Transparency logs (crt.sh)."
-    )
+
+    @property
+    def name(self) -> str:
+        return L(
+            "Subdomínios via Certificate Transparency",
+            "Certificate Transparency subdomains",
+        )
+
+    @property
+    def description(self) -> str:
+        return L(
+            "Enumera subdomínios a partir de logs públicos de Certificate "
+            "Transparency (crt.sh).",
+            "Enumerate subdomains from public Certificate Transparency logs (crt.sh).",
+        )
 
     async def run(self, ctx: RunContext) -> list[Finding]:
         domain = _normalize_domain(ctx.target)
@@ -44,15 +56,23 @@ class CtSubdomains(Module):
             return [
                 ctx.finding(
                     self.id,
-                    "Could not query Certificate Transparency logs",
+                    L(
+                        "Não foi possível consultar os logs de Certificate Transparency",
+                        "Could not query Certificate Transparency logs",
+                    ),
                     Severity.LOW,
-                    description=(
-                        f"The CT log lookup for {domain} via crt.sh did not complete."
+                    description=Lf(
+                        "A consulta aos logs de CT para {domain} via crt.sh não "
+                        "foi concluída.",
+                        "The CT log lookup for {domain} via crt.sh did not complete.",
+                        domain=domain,
                     ),
                     evidence=f"{type(e).__name__}: {e}",
-                    recommendation=(
+                    recommendation=L(
+                        "Tente novamente mais tarde ou consulte outra fonte de CT; "
+                        "o crt.sh pode estar lento ou com limite de requisições.",
                         "Retry later or query another CT source; crt.sh can be slow "
-                        "or rate-limited."
+                        "or rate-limited.",
                     ),
                     references=["https://crt.sh/"],
                 )
@@ -68,10 +88,13 @@ class CtSubdomains(Module):
 
         if count > _LARGE_SURFACE:
             severity = Severity.LOW
-            recommendation = (
+            recommendation = L(
+                "Um grande número de subdomínios é publicamente descobrível via "
+                "logs de CT. Revise se cada host exposto deve mesmo ser alcançável "
+                "e reduza a superfície de ataque exposta externamente quando possível.",
                 "A large number of subdomains are publicly discoverable via CT logs. "
                 "Review whether every exposed host is intended to be reachable and "
-                "reduce the externally exposed attack surface where possible."
+                "reduce the externally exposed attack surface where possible.",
             )
         else:
             severity = Severity.INFO
@@ -80,11 +103,19 @@ class CtSubdomains(Module):
         return [
             ctx.finding(
                 self.id,
-                f"Discovered {count} subdomains via Certificate Transparency",
+                Lf(
+                    "Descobertos {count} subdomínios via Certificate Transparency",
+                    "Discovered {count} subdomains via Certificate Transparency",
+                    count=count,
+                ),
                 severity,
-                description=(
-                    f"Found {count} unique subdomain(s) of {domain} in public "
-                    f"Certificate Transparency logs (crt.sh)."
+                description=Lf(
+                    "Encontrado(s) {count} subdomínio(s) único(s) de {domain} em "
+                    "logs públicos de Certificate Transparency (crt.sh).",
+                    "Found {count} unique subdomain(s) of {domain} in public "
+                    "Certificate Transparency logs (crt.sh).",
+                    count=count,
+                    domain=domain,
                 ),
                 evidence=evidence,
                 recommendation=recommendation,
