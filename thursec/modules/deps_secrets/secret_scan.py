@@ -18,6 +18,7 @@ from pathlib import Path
 
 from ...core.context import RunContext
 from ...core.finding import Finding, Severity
+from ...core.i18n import L, Lf
 from ...core.module import Category, Intensity, Module
 
 # Directories we never descend into: VCS metadata, vendored deps, build output,
@@ -115,12 +116,15 @@ _GENERIC_RULE_NAME = "Generic high-entropy secret"
 
 class SecretScan(Module):
     id = "deps_secrets.secret_scan"
-    name = "Local secret scan"
+    name = L("Varredura local de segredos", "Local secret scan")
     category = Category.DEPS_SECRETS
     intensity = Intensity.PASSIVE
-    description = (
+    description = L(
+        "Varre recursivamente um diretório/repo local em busca de credenciais "
+        "vazadas (chaves de API, tokens, chaves privadas) usando regras de regex "
+        "nomeadas.",
         "Recursively scan a local directory/repo for leaked credentials "
-        "(API keys, tokens, private keys) using named regex rules."
+        "(API keys, tokens, private keys) using named regex rules.",
     )
 
     async def run(self, ctx: RunContext) -> list[Finding]:
@@ -131,9 +135,13 @@ class SecretScan(Module):
             findings.append(
                 ctx.finding(
                     self.id,
-                    "Scan target does not exist",
+                    L("Alvo de varredura não existe", "Scan target does not exist"),
                     Severity.INFO,
-                    description=f"Path {root!s} was not found; nothing to scan.",
+                    description=Lf(
+                        "O caminho {root} não foi encontrado; nada a varrer.",
+                        "Path {root} was not found; nothing to scan.",
+                        root=str(root),
+                    ),
                 )
             )
             return findings
@@ -147,18 +155,28 @@ class SecretScan(Module):
                 findings.append(
                     ctx.finding(
                         self.id,
-                        f"Possible {name} in {rel}",
+                        L(
+                            f"Possível {name} em {rel}",
+                            f"Possible {name} in {rel}",
+                        ),
                         sev,
-                        description=(
+                        description=L(
+                            f"Uma string correspondente a '{name}' foi encontrada "
+                            f"em {rel} na linha {lineno}.",
                             f"A string matching '{name}' was found in {rel} "
-                            f"at line {lineno}."
+                            f"at line {lineno}.",
                         ),
                         evidence=_redact_line(line, value),
-                        recommendation=(
+                        recommendation=L(
+                            "Revogue/rotacione a credencial imediatamente, remova-a "
+                            "do arquivo e expurgue-a do histórico de controle de "
+                            "versão (ex.: git filter-repo / BFG). Guarde segredos "
+                            "em um gerenciador de segredos ou no ambiente, nunca no "
+                            "código.",
                             "Revoke/rotate the credential immediately, remove it "
                             "from the file, and purge it from version-control "
                             "history (e.g. git filter-repo / BFG). Store secrets "
-                            "in a secrets manager or environment, never in code."
+                            "in a secrets manager or environment, never in code.",
                         ),
                         metadata={"file": rel, "line": lineno, "rule": name},
                     )

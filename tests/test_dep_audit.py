@@ -9,12 +9,24 @@ import pytest
 
 from thursec.core.context import RunContext
 from thursec.core.finding import Severity
+from thursec.core.i18n import get_lang, set_lang
 from thursec.modules.deps_secrets.dep_audit import (
     DepAudit,
     _canon,
     _derive_severity,
     _parse_manifest,
 )
+
+
+@pytest.fixture(autouse=True)
+def _force_english():
+    """These tests assert the English finding text; pin the language to en."""
+    prev = get_lang()
+    set_lang("en")
+    try:
+        yield
+    finally:
+        set_lang(prev)
 
 # A canned OSV advisory for a known-vulnerable package/version.
 _JINJA_VULN = {

@@ -34,6 +34,7 @@ import urllib.request
 
 from ...core.context import RunContext
 from ...core.finding import Finding, Severity
+from ...core.i18n import L
 from ...core.module import Category, Intensity, Module
 
 _NVD_API_URL = "https://services.nvd.nist.gov/rest/json/cves/2.0"
@@ -46,14 +47,18 @@ _MAX_FINDINGS = 50
 
 class CveLookup(Module):
     id = "vuln.cve_lookup"
-    name = "CVE lookup (NVD)"
+    name = L("Consulta de CVE (NVD)", "CVE lookup (NVD)")
     category = Category.VULN
     intensity = Intensity.PASSIVE
-    description = (
+    description = L(
+        "Consulta CVEs conhecidos de um produto (e versão opcional) na base "
+        "pública NVD. Informe o produto via options['product'] ou um alvo como "
+        "'nginx:1.18.0'. Passivo: consulta apenas services.nvd.nist.gov, nunca o "
+        "alvo. Reporta exposição potencial, nunca exploração confirmada.",
         "Look up known CVEs for a product (and optional version) in the public "
         "NVD database. Give it a product via options['product'] or a target like "
         "'nginx:1.18.0'. Passive: queries services.nvd.nist.gov only, never the "
-        "target. Reports potential exposure, never confirmed exploitation."
+        "target. Reports potential exposure, never confirmed exploitation.",
     )
 
     async def run(self, ctx: RunContext) -> list[Finding]:
@@ -63,18 +68,28 @@ class CveLookup(Module):
             return [
                 ctx.finding(
                     self.id,
-                    "No product given for CVE lookup",
+                    L(
+                        "Nenhum produto informado para consulta de CVE",
+                        "No product given for CVE lookup",
+                    ),
                     Severity.INFO,
-                    description=(
+                    description=L(
+                        "Este módulo precisa de um nome de produto para buscar "
+                        "CVEs conhecidos na NVD. Informe via options['product'] "
+                        "(com um options['version'] opcional), ou defina o alvo "
+                        "como 'product' ou 'product:version' (ex.: 'nginx:1.18.0').",
                         "This module needs a product name to search the NVD for "
                         "known CVEs. Provide it via options['product'] (with an "
                         "optional options['version']), or set the target to "
-                        "'product' or 'product:version' (e.g. 'nginx:1.18.0')."
+                        "'product' or 'product:version' (e.g. 'nginx:1.18.0').",
                     ),
-                    recommendation=(
+                    recommendation=L(
+                        "Rode de novo com um fingerprint de produto, por exemplo "
+                        "target='openssl:1.1.1' ou options={'product': 'openssl', "
+                        "'version': '1.1.1'}.",
                         "Re-run with a product fingerprint, for example "
                         "target='openssl:1.1.1' or options={'product': 'openssl', "
-                        "'version': '1.1.1'}."
+                        "'version': '1.1.1'}.",
                     ),
                     references=[_NVD_API_URL],
                 )
@@ -86,16 +101,23 @@ class CveLookup(Module):
             return [
                 ctx.finding(
                     self.id,
-                    f"Could not query NVD for '{product}'",
+                    L(
+                        f"Não foi possível consultar a NVD para '{product}'",
+                        f"Could not query NVD for '{product}'",
+                    ),
                     Severity.LOW,
-                    description=(
+                    description=L(
+                        f"A consulta à NVD para '{product}' não foi concluída, "
+                        "então nenhum CVE conhecido pôde ser obtido.",
                         f"The NVD lookup for '{product}' did not complete, so no "
-                        "known CVEs could be retrieved."
+                        "known CVEs could be retrieved.",
                     ),
                     evidence=f"{type(e).__name__}: {e}",
-                    recommendation=(
+                    recommendation=L(
+                        "Tente novamente mais tarde; a API pública da NVD é "
+                        "limitada por taxa sem uma API key e pode ser lenta.",
                         "Retry later; the public NVD API is rate-limited without "
-                        "an API key and can be slow."
+                        "an API key and can be slow.",
                     ),
                     references=[_NVD_API_URL],
                     metadata={"product": product, "version": version},
@@ -108,11 +130,17 @@ class CveLookup(Module):
             return [
                 ctx.finding(
                     self.id,
-                    f"Could not parse NVD response for '{product}'",
+                    L(
+                        f"Não foi possível analisar a resposta da NVD para "
+                        f"'{product}'",
+                        f"Could not parse NVD response for '{product}'",
+                    ),
                     Severity.LOW,
-                    description=(
+                    description=L(
+                        "A resposta da NVD não pôde ser analisada, então nenhum "
+                        "CVE conhecido pôde ser extraído.",
                         "The NVD response could not be parsed, so no known CVEs "
-                        "could be extracted."
+                        "could be extracted.",
                     ),
                     evidence=f"{type(e).__name__}: {e}",
                     references=[_NVD_API_URL],
@@ -142,12 +170,19 @@ class CveLookup(Module):
             findings.append(
                 ctx.finding(
                     self.id,
-                    f"No known CVEs found for '{label}'",
+                    L(
+                        f"Nenhum CVE conhecido encontrado para '{label}'",
+                        f"No known CVEs found for '{label}'",
+                    ),
                     Severity.INFO,
-                    description=(
+                    description=L(
+                        f"A NVD não retornou CVEs correspondentes a '{label}'. "
+                        "Isso não é prova de que o produto esteja livre de "
+                        "vulnerabilidades — apenas que nenhuma surgiu para esta "
+                        "palavra-chave/versão.",
                         f"The NVD returned no CVEs matching '{label}'. This is not "
                         "proof the product is free of vulnerabilities — only that "
-                        "none surfaced for this keyword/version."
+                        "none surfaced for this keyword/version.",
                     ),
                     references=[_NVD_API_URL],
                     metadata={"product": product, "version": version},
@@ -404,25 +439,38 @@ def _cve_finding(
             "a potential exposure."
         )
 
-    description = summary or (
+    description = summary or L(
+        f"A NVD lista {cve_id} como relacionado a {product}. Veja o aviso "
+        "referenciado para detalhes.",
         f"NVD lists {cve_id} as relating to {product}. See the referenced "
-        "advisory for details."
+        "advisory for details.",
     )
     if confidence == "potential" and version:
         description = (
-            "Potential exposure (not confirmed for this exact version). " + description
+            L(
+                "Exposição potencial (não confirmada para esta versão exata). ",
+                "Potential exposure (not confirmed for this exact version). ",
+            )
+            + description
         )
 
     return ctx.finding(
         module_id,
-        f"CVE conhecido: {cve_id} afeta {product}",
+        L(
+            f"CVE conhecido: {cve_id} afeta {product}",
+            f"Known CVE: {cve_id} affects {product}",
+        ),
         severity,
         description=description,
         evidence="\n".join(evidence_parts),
-        recommendation=(
+        recommendation=L(
+            "Confirme se a versão implantada é de fato afetada usando o aviso da "
+            "NVD, depois atualize para uma release corrigida ou aplique a "
+            "mitigação do fornecedor. Isto indica exposição potencial, não "
+            "exploração.",
             "Confirm whether the deployed version is actually affected using the "
             "NVD advisory, then upgrade to a fixed release or apply the vendor's "
-            "mitigation. This indicates potential exposure, not exploitation."
+            "mitigation. This indicates potential exposure, not exploitation.",
         ),
         references=references,
         metadata={

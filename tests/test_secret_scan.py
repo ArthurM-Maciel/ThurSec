@@ -2,9 +2,21 @@ import pytest
 
 from thursec.core.context import RunContext
 from thursec.core.finding import Severity
+from thursec.core.i18n import get_lang, set_lang
 from thursec.modules.deps_secrets.secret_scan import SecretScan
 
 FAKE_AWS_KEY = "AKIAIOSFODNN7EXAMPLE"
+
+
+@pytest.fixture(autouse=True)
+def _force_english():
+    """These tests assert the English finding text; pin the language to en."""
+    prev = get_lang()
+    set_lang("en")
+    try:
+        yield
+    finally:
+        set_lang(prev)
 
 
 async def _run(target: str):
