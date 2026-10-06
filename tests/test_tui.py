@@ -11,6 +11,7 @@ import pytest
 
 from thursec.core.engine import Registry
 from thursec.core.finding import Finding, Severity
+from thursec.core.i18n import get_lang, set_lang
 from thursec.core.module import Category, Intensity
 from thursec.tui.app import (
     SeverityTally,
@@ -21,6 +22,22 @@ from thursec.tui.app import (
     module_prompt,
     severity_cell,
 )
+
+
+@pytest.fixture(autouse=True)
+def _english_ui():
+    """Pin the UI language to English for assertions on visible text.
+
+    The project default is ``pt`` (PT-BR-first), so without this the labels
+    would render in Portuguese. Tests that care about the Portuguese rendering
+    set the language explicitly and are isolated by the restore below.
+    """
+    previous = get_lang()
+    set_lang("en")
+    try:
+        yield
+    finally:
+        set_lang(previous)
 
 
 @pytest.fixture(scope="module")
@@ -98,6 +115,31 @@ def test_intensity_badge_and_module_prompt(registry: Registry) -> None:
     prompt = module_prompt(module).plain
     assert module.id in prompt
     assert module.name in prompt
+
+
+# --- PT-BR rendering (default language) ------------------------------------
+
+
+def test_severity_cell_renders_portuguese_by_default() -> None:
+    set_lang("pt")
+    cell = severity_cell(Severity.CRITICAL)
+    assert cell.plain == "CRÍTICO"
+    assert "ff4d6d" in str(cell.style).lower()
+
+
+def test_counts_line_portuguese_labels_and_empty_state() -> None:
+    set_lang("pt")
+    line = counts_line(SeverityTally.from_findings([_finding(Severity.HIGH)])).plain
+    for name in ("CRÍTICO", "ALTO", "MÉDIO", "BAIXO", "INFORMATIVO"):
+        assert name in line
+    assert "nenhum ainda" in counts_line(SeverityTally.from_findings([])).plain
+
+
+def test_intensity_badge_portuguese(registry: Registry) -> None:
+    set_lang("pt")
+    assert "passivo" in intensity_badge(Intensity.PASSIVE).plain
+    assert "ativo" in intensity_badge(Intensity.ACTIVE).plain
+    assert "intrusivo" in intensity_badge(Intensity.INTRUSIVE).plain
 
 
 def _finding(sev: Severity) -> Finding:
