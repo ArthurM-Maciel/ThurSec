@@ -25,6 +25,7 @@ from pathlib import Path
 
 from ...core.context import RunContext
 from ...core.finding import Finding, Severity
+from ...core.i18n import L, Lf
 from ...core.module import Category, Intensity, Module
 
 try:  # stdlib on 3.11+; requires-python is >=3.11 so this is expected to exist.
@@ -59,14 +60,19 @@ _SEVERITY_WORDS: dict[str, Severity] = {
 
 class DepAudit(Module):
     id = "deps_secrets.dep_audit"
-    name = "Dependency audit (OSV)"
+    name = L("Auditoria de dependências (OSV)", "Dependency audit (OSV)")
     category = Category.DEPS_SECRETS
     intensity = Intensity.PASSIVE
-    description = (
+    description = L(
+        "Analisa os manifestos de dependências Python de um projeto "
+        "(requirements*.txt, pyproject.toml) e verifica cada pacote fixado "
+        "contra a base pública de vulnerabilidades OSV. Sinaliza versões "
+        "sabidamente vulneráveis e dependências não fixadas. Passivo: lê "
+        "arquivos localmente e consulta apenas osv.dev.",
         "Parse a project's Python dependency manifests (requirements*.txt, "
         "pyproject.toml) and check each pinned package against the public OSV "
         "vulnerability database. Flags known-vulnerable versions and unpinned "
-        "dependencies. Passive: reads files locally and queries osv.dev only."
+        "dependencies. Passive: reads files locally and queries osv.dev only.",
     )
 
     async def run(self, ctx: RunContext) -> list[Finding]:
@@ -77,9 +83,13 @@ class DepAudit(Module):
             return [
                 ctx.finding(
                     self.id,
-                    "Audit target does not exist",
+                    L("Alvo de auditoria não existe", "Audit target does not exist"),
                     Severity.INFO,
-                    description=f"Path {root!s} was not found; nothing to audit.",
+                    description=Lf(
+                        "O caminho {root} não foi encontrado; nada a auditar.",
+                        "Path {root} was not found; nothing to audit.",
+                        root=str(root),
+                    ),
                 )
             ]
 
@@ -89,11 +99,17 @@ class DepAudit(Module):
             return [
                 ctx.finding(
                     self.id,
-                    "No Python dependency manifests found",
+                    L(
+                        "Nenhum manifesto de dependências Python encontrado",
+                        "No Python dependency manifests found",
+                    ),
                     Severity.INFO,
-                    description=(
+                    description=Lf(
+                        "Nenhum requirements*.txt ou pyproject.toml foi encontrado "
+                        "em {base}; não há dependências Python a auditar.",
                         "No requirements*.txt or pyproject.toml was found under "
-                        f"{base!s}; there are no Python dependencies to audit."
+                        "{base}; there are no Python dependencies to audit.",
+                        base=str(base),
                     ),
                 )
             ]
@@ -109,11 +125,16 @@ class DepAudit(Module):
                 findings.append(
                     ctx.finding(
                         self.id,
-                        f"Could not parse manifest {rel}",
+                        L(
+                            f"Não foi possível analisar o manifesto {rel}",
+                            f"Could not parse manifest {rel}",
+                        ),
                         Severity.LOW,
-                        description=(
+                        description=L(
+                            "O manifesto de dependências não pôde ser analisado; "
+                            "seus pacotes não foram auditados.",
                             "The dependency manifest could not be parsed; its "
-                            "packages were not audited."
+                            "packages were not audited.",
                         ),
                         evidence=f"{type(e).__name__}: {e}",
                         metadata={"manifest": rel},
@@ -127,17 +148,26 @@ class DepAudit(Module):
                 findings.append(
                     ctx.finding(
                         self.id,
-                        f"Unpinned dependency '{name}' in {rel}",
+                        L(
+                            f"Dependência não fixada '{name}' em {rel}",
+                            f"Unpinned dependency '{name}' in {rel}",
+                        ),
                         Severity.INFO,
-                        description=(
+                        description=L(
+                            f"'{name}' é declarada sem uma versão exata (==), "
+                            "então não pode ser resolvida para uma única versão e "
+                            "não foi verificada contra a OSV.",
                             f"'{name}' is declared without an exact version (=="
                             "), so it cannot be resolved to a single version and "
-                            "was not checked against OSV."
+                            "was not checked against OSV.",
                         ),
-                        recommendation=(
+                        recommendation=L(
+                            "Fixe as dependências em versões exatas (ex.: em um "
+                            "lock file) para que possam ser auditadas e os builds "
+                            "sejam reproduzíveis.",
                             "Pin dependencies to exact versions (e.g. in a lock "
                             "file) so they can be audited and builds are "
-                            "reproducible."
+                            "reproducible.",
                         ),
                         metadata={"manifest": rel, "package": name},
                     )
@@ -147,11 +177,17 @@ class DepAudit(Module):
             findings.append(
                 ctx.finding(
                     self.id,
-                    "No pinned dependencies to audit",
+                    L(
+                        "Nenhuma dependência fixada para auditar",
+                        "No pinned dependencies to audit",
+                    ),
                     Severity.INFO,
-                    description=(
+                    description=L(
+                        "Manifestos foram encontrados, mas nenhum fixou um pacote "
+                        "em uma versão exata, então nada foi consultado contra a "
+                        "OSV.",
                         "Manifests were found but none pinned a package to an "
-                        "exact version, so nothing was queried against OSV."
+                        "exact version, so nothing was queried against OSV.",
                     ),
                 )
             )
@@ -167,14 +203,23 @@ class DepAudit(Module):
                 findings.append(
                     ctx.finding(
                         self.id,
-                        f"OSV query failed for {name} {version}",
+                        L(
+                            f"Consulta OSV falhou para {name} {version}",
+                            f"OSV query failed for {name} {version}",
+                        ),
                         Severity.LOW,
-                        description=(
+                        description=L(
+                            "A consulta à OSV não foi concluída, então este pacote "
+                            "não pôde ser verificado quanto a vulnerabilidades "
+                            "conhecidas.",
                             "The OSV lookup did not complete, so this package "
-                            "could not be checked for known vulnerabilities."
+                            "could not be checked for known vulnerabilities.",
                         ),
                         evidence=f"{type(e).__name__}: {e}",
-                        recommendation="Retry with network access to osv.dev.",
+                        recommendation=L(
+                            "Tente novamente com acesso de rede ao osv.dev.",
+                            "Retry with network access to osv.dev.",
+                        ),
                         metadata={"manifest": rel, "package": name, "version": version},
                     )
                 )
@@ -187,11 +232,17 @@ class DepAudit(Module):
             findings.append(
                 ctx.finding(
                     self.id,
-                    "No known-vulnerable dependencies found",
+                    L(
+                        "Nenhuma dependência sabidamente vulnerável encontrada",
+                        "No known-vulnerable dependencies found",
+                    ),
                     Severity.INFO,
-                    description=(
-                        f"Audited {audited} pinned package(s) against OSV; none "
-                        "match a known vulnerability."
+                    description=Lf(
+                        "Auditou {audited} pacote(s) fixado(s) contra a OSV; "
+                        "nenhum corresponde a uma vulnerabilidade conhecida.",
+                        "Audited {audited} pinned package(s) against OSV; none "
+                        "match a known vulnerability.",
+                        audited=audited,
                     ),
                     metadata={"packages_audited": audited},
                 )
@@ -349,17 +400,27 @@ def _vuln_finding(
 
     return ctx.finding(
         module_id,
-        f"Vulnerable dependency {name} {version} ({osv_id})",
+        L(
+            f"Dependência vulnerável {name} {version} ({osv_id})",
+            f"Vulnerable dependency {name} {version} ({osv_id})",
+        ),
         severity,
         description=(
             summary
-            or f"OSV lists {osv_id} as affecting {name} {version}. See the "
-            "referenced advisory for details."
+            or L(
+                f"A OSV lista {osv_id} como afetando {name} {version}. Veja o "
+                "aviso referenciado para detalhes.",
+                f"OSV lists {osv_id} as affecting {name} {version}. See the "
+                "referenced advisory for details.",
+            )
         ),
         evidence="\n".join(evidence_parts),
-        recommendation=(
+        recommendation=L(
+            "Atualize para uma versão corrigida listada no aviso da OSV, ou "
+            "aplique a mitigação do fornecedor. Rode a auditoria de novo para "
+            "confirmar a correção.",
             "Upgrade to a fixed version listed in the OSV advisory, or apply the "
-            "vendor's mitigation. Re-run the audit to confirm the fix."
+            "vendor's mitigation. Re-run the audit to confirm the fix.",
         ),
         references=references,
         metadata={

@@ -11,7 +11,19 @@ import pytest
 
 from thursec.core.context import RunContext
 from thursec.core.finding import Severity
+from thursec.core.i18n import get_lang, set_lang
 from thursec.modules.vuln.http_methods import HttpMethods
+
+
+@pytest.fixture(autouse=True)
+def _force_english():
+    """These tests assert the English finding text; pin the language to en."""
+    prev = get_lang()
+    set_lang("en")
+    try:
+        yield
+    finally:
+        set_lang(prev)
 
 
 def _ctx(target="https://example.com", **options):

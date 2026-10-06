@@ -25,6 +25,7 @@ import json
 
 from ...core.context import RunContext
 from ...core.finding import Finding, Severity
+from ...core.i18n import L, Lf
 from ...core.module import Category, Intensity, Module
 from ...core.runner import ToolNotFoundError
 from ...core.target import TargetError, validate_target
@@ -48,21 +49,28 @@ _SEVERITY_MAP: dict[str, Severity] = {
     "unknown": Severity.INFO,
 }
 
-_INSTALL_HINT = (
-    "Install nuclei (Go): 'go install -v "
-    "github.com/projectdiscovery/nuclei/v3/cmd/nuclei@latest', or grab a release "
-    "from https://github.com/projectdiscovery/nuclei/releases, then re-run."
-)
+def _install_hint() -> str:
+    return L(
+        "Instale o nuclei (Go): 'go install -v "
+        "github.com/projectdiscovery/nuclei/v3/cmd/nuclei@latest', ou baixe uma "
+        "release em https://github.com/projectdiscovery/nuclei/releases, e rode "
+        "de novo.",
+        "Install nuclei (Go): 'go install -v "
+        "github.com/projectdiscovery/nuclei/v3/cmd/nuclei@latest', or grab a release "
+        "from https://github.com/projectdiscovery/nuclei/releases, then re-run.",
+    )
 
 
 class NucleiScan(Module):
     id = "vuln.nuclei"
-    name = "Nuclei vulnerability scan"
+    name = L("Varredura de vulnerabilidades Nuclei", "Nuclei vulnerability scan")
     category = Category.VULN
     intensity = Intensity.ACTIVE
-    description = (
+    description = L(
+        "Roda o scanner de vulnerabilidades baseado em templates nuclei contra o "
+        "alvo (templates destrutivos/intrusivos excluídos por padrão).",
         "Run the nuclei template-based vulnerability scanner against the target "
-        "(destructive/intrusive templates excluded by default)."
+        "(destructive/intrusive templates excluded by default).",
     )
     requires_tools = ("nuclei",)
 
@@ -83,15 +91,24 @@ class NucleiScan(Module):
             return [
                 ctx.finding(
                     self.id,
-                    "Refusing to scan: unsafe or invalid target",
+                    L(
+                        "Recusando varredura: alvo inseguro ou inválido",
+                        "Refusing to scan: unsafe or invalid target",
+                    ),
                     Severity.LOW,
-                    description=(
+                    description=L(
+                        "O alvo foi rejeitado antes de rodar o nuclei porque não é "
+                        "um host/URL válido e poderia ser interpretado como uma "
+                        "opção de linha de comando.",
                         "The target was rejected before running nuclei because it "
                         "is not a valid host/URL and could be interpreted as a "
-                        "command-line option."
+                        "command-line option.",
                     ),
                     evidence=str(e),
-                    recommendation="Provide a plain hostname, IP, CIDR, or URL.",
+                    recommendation=L(
+                        "Forneça um hostname, IP, CIDR ou URL simples.",
+                        "Provide a plain hostname, IP, CIDR, or URL.",
+                    ),
                 )
             ]
 
@@ -112,13 +129,15 @@ class NucleiScan(Module):
             return [
                 ctx.finding(
                     self.id,
-                    "nuclei is not installed",
+                    L("nuclei não está instalado", "nuclei is not installed"),
                     Severity.INFO,
-                    description=(
+                    description=L(
+                        "O binário do nuclei não foi encontrado no PATH, então "
+                        "nenhuma varredura de vulnerabilidades foi executada.",
                         "The nuclei binary was not found on PATH, so no "
-                        "vulnerability scan was performed."
+                        "vulnerability scan was performed.",
                     ),
-                    recommendation=_INSTALL_HINT,
+                    recommendation=_install_hint(),
                     references=["https://github.com/projectdiscovery/nuclei"],
                 )
             ]
@@ -127,15 +146,23 @@ class NucleiScan(Module):
             return [
                 ctx.finding(
                     self.id,
-                    "nuclei scan timed out",
-                    Severity.LOW,
-                    description=(
-                        f"The nuclei scan did not finish within {timeout:.0f}s and "
-                        "was terminated; results may be incomplete."
+                    L(
+                        "varredura nuclei excedeu o tempo limite",
+                        "nuclei scan timed out",
                     ),
-                    recommendation=(
+                    Severity.LOW,
+                    description=Lf(
+                        "A varredura nuclei não terminou em {timeout:.0f}s e foi "
+                        "encerrada; os resultados podem estar incompletos.",
+                        "The nuclei scan did not finish within {timeout:.0f}s and "
+                        "was terminated; results may be incomplete.",
+                        timeout=timeout,
+                    ),
+                    recommendation=L(
+                        "Aumente ctx.options['timeout'], reduza o conjunto de "
+                        "templates (ex.: -tags), ou escaneie menos alvos por vez.",
                         "Increase ctx.options['timeout'], narrow the template set "
-                        "(e.g. -tags), or scan fewer targets at once."
+                        "(e.g. -tags), or scan fewer targets at once.",
                     ),
                 )
             ]
@@ -148,16 +175,21 @@ class NucleiScan(Module):
                 return [
                     ctx.finding(
                         self.id,
-                        "nuclei scan failed",
+                        L("varredura nuclei falhou", "nuclei scan failed"),
                         Severity.LOW,
-                        description=(
+                        description=L(
+                            "O nuclei saiu com status diferente de zero e não "
+                            "produziu findings analisáveis.",
                             "nuclei exited with a non-zero status and produced no "
-                            "parseable findings."
+                            "parseable findings.",
                         ),
                         evidence=(result.stderr or "").strip()[:2000],
-                        recommendation=(
+                        recommendation=L(
+                            "Verifique se o alvo está acessível e se os templates "
+                            "do nuclei estão instalados ('nuclei "
+                            "-update-templates').",
                             "Check the target is reachable and the nuclei "
-                            "templates are installed ('nuclei -update-templates')."
+                            "templates are installed ('nuclei -update-templates').",
                         ),
                     )
                 ]
@@ -165,11 +197,16 @@ class NucleiScan(Module):
             return [
                 ctx.finding(
                     self.id,
-                    "nuclei scan completed with no matches",
+                    L(
+                        "varredura nuclei concluída sem correspondências",
+                        "nuclei scan completed with no matches",
+                    ),
                     Severity.INFO,
-                    description=(
+                    description=L(
+                        "O nuclei rodou com sucesso e não casou nenhum template "
+                        "contra o alvo.",
                         "nuclei ran successfully and did not match any template "
-                        "against the target."
+                        "against the target.",
                     ),
                 )
             ]

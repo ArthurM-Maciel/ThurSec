@@ -7,10 +7,24 @@ offline while still exercising parsing, severity mapping, and every error path.
 
 import json
 
+import pytest
+
 from thursec.core.context import RunContext
 from thursec.core.finding import Severity
+from thursec.core.i18n import get_lang, set_lang
 from thursec.core.runner import CommandResult, ToolNotFoundError
 from thursec.modules.vuln.nuclei import NucleiScan
+
+
+@pytest.fixture(autouse=True)
+def _force_english():
+    """These tests assert the English finding text; pin the language to en."""
+    prev = get_lang()
+    set_lang("en")
+    try:
+        yield
+    finally:
+        set_lang(prev)
 
 
 # Three real-shaped JSONL records of differing severity, plus a line of garbage

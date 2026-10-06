@@ -9,12 +9,24 @@ import pytest
 
 from thursec.core.context import RunContext
 from thursec.core.finding import Severity
+from thursec.core.i18n import get_lang, set_lang
 from thursec.modules.vuln.cve_lookup import (
     CveLookup,
     _base_score,
     _confidence_for,
     _severity_from_score,
 )
+
+
+@pytest.fixture(autouse=True)
+def _force_english():
+    """These tests assert the English finding text; pin the language to en."""
+    prev = get_lang()
+    set_lang("en")
+    try:
+        yield
+    finally:
+        set_lang(prev)
 
 # Two canned NVD CVE records with different CVSS metrics and version ranges.
 # CVE-CRIT: CVSS v3.1 = 9.8 (CRITICAL), affects nginx < 1.20.1.
@@ -108,7 +120,7 @@ async def test_parses_both_cves_with_severity(monkeypatch):
 
     crit = by_id["CVE-2021-23017"]
     assert crit.severity == Severity.CRITICAL  # v3.1 9.8
-    assert crit.title == "CVE conhecido: CVE-2021-23017 afeta nginx"
+    assert crit.title == "Known CVE: CVE-2021-23017 affects nginx"
     assert crit.description.startswith("nginx DNS resolver")  # english summary
     assert any("nvd.nist.gov/vuln/detail/CVE-2021-23017" in r for r in crit.references)
     assert "https://nginx.org/download/patch.txt" in crit.references
@@ -134,7 +146,7 @@ async def test_version_in_range_is_confirmed(monkeypatch):
 async def test_version_out_of_range_is_dropped(monkeypatch):
     findings = await _run(target="nginx:1.21.0", monkeypatch=monkeypatch)
 
-    cve_findings = [f for f in findings if f.title.startswith("CVE conhecido")]
+    cve_findings = [f for f in findings if f.title.startswith("Known CVE")]
     assert cve_findings == []
     # A reassuring INFO stands in instead.
     assert any("No known CVEs found" in f.title for f in findings)
