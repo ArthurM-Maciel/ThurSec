@@ -1,8 +1,23 @@
 import json
 
+import pytest
+
+from thursec.core import i18n
 from thursec.core.context import RunContext
 from thursec.core.finding import Severity
 from thursec.modules.recon.dns_enum import DnsEnum, _clean_txt, _parse_answer
+
+
+@pytest.fixture(autouse=True)
+def _english_findings():
+    """Findings are i18n'd (pt by default). These tests assert the English
+    wording, so pin the language to 'en' and restore it afterwards."""
+    previous = i18n.get_lang()
+    i18n.set_lang("en")
+    try:
+        yield
+    finally:
+        i18n.set_lang(previous)
 
 
 def _doh(*datas):

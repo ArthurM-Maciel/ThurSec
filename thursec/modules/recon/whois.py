@@ -21,6 +21,7 @@ from datetime import datetime, timezone
 
 from ...core.context import RunContext
 from ...core.finding import Finding, Severity
+from ...core.i18n import L, Lf
 from ...core.module import Category, Intensity, Module
 
 _RDAP_URL = "https://rdap.org/domain/{domain}"
@@ -39,13 +40,24 @@ _EVENT_LABELS = {
 
 class WhoisRdap(Module):
     id = "recon.whois"
-    name = "Domain registration (RDAP/WHOIS)"
     category = Category.RECON
     intensity = Intensity.PASSIVE
-    description = (
-        "Passively look up domain registration data (registrar, dates, "
-        "nameservers, status) via the public RDAP service."
-    )
+
+    @property
+    def name(self) -> str:
+        return L(
+            "Registro de domínio (RDAP/WHOIS)",
+            "Domain registration (RDAP/WHOIS)",
+        )
+
+    @property
+    def description(self) -> str:
+        return L(
+            "Consulta passivamente os dados de registro do domínio (registrador, "
+            "datas, nameservers, status) via o serviço público RDAP.",
+            "Passively look up domain registration data (registrar, dates, "
+            "nameservers, status) via the public RDAP service.",
+        )
 
     async def run(self, ctx: RunContext) -> list[Finding]:
         domain = _normalize_domain(ctx.target)
@@ -59,16 +71,24 @@ class WhoisRdap(Module):
             return [
                 ctx.finding(
                     self.id,
-                    "Could not retrieve RDAP data",
+                    L(
+                        "Não foi possível obter os dados RDAP",
+                        "Could not retrieve RDAP data",
+                    ),
                     Severity.LOW,
-                    description=(
-                        f"The RDAP lookup for {domain} via rdap.org did not complete."
+                    description=Lf(
+                        "A consulta RDAP para {domain} via rdap.org não foi concluída.",
+                        "The RDAP lookup for {domain} via rdap.org did not complete.",
+                        domain=domain,
                     ),
                     evidence=f"{type(e).__name__}: {e}",
-                    recommendation=(
+                    recommendation=L(
+                        "Tente novamente mais tarde ou consulte diretamente o servidor "
+                        "RDAP/WHOIS do TLD; o rdap.org pode estar lento, com limite de "
+                        "requisições ou sem entrada de bootstrap para alguns TLDs.",
                         "Retry later or query the TLD's RDAP/WHOIS server directly; "
                         "rdap.org can be slow, rate-limited, or lack a bootstrap "
-                        "entry for some TLDs."
+                        "entry for some TLDs.",
                     ),
                     references=["https://about.rdap.org/"],
                 )
@@ -91,10 +111,16 @@ class WhoisRdap(Module):
         findings.append(
             ctx.finding(
                 self.id,
-                f"Domain registration data for {domain}",
+                Lf(
+                    "Dados de registro do domínio {domain}",
+                    "Domain registration data for {domain}",
+                    domain=domain,
+                ),
                 Severity.INFO,
-                description=(
-                    f"Retrieved registration data for {domain} from public RDAP."
+                description=Lf(
+                    "Dados de registro de {domain} obtidos do RDAP público.",
+                    "Retrieved registration data for {domain} from public RDAP.",
+                    domain=domain,
                 ),
                 evidence="\n".join(summary_lines) if summary_lines else "(no fields)",
                 references=["https://about.rdap.org/"],
@@ -118,17 +144,26 @@ class WhoisRdap(Module):
                 findings.append(
                     ctx.finding(
                         self.id,
-                        "Domain is expired",
+                        L("Domínio expirado", "Domain is expired"),
                         Severity.HIGH,
-                        description=(
-                            f"The registration for {domain} expired on {expiry_raw} "
-                            f"({abs(int(days_left))} day(s) ago)."
+                        description=Lf(
+                            "O registro de {domain} expirou em {expiry} "
+                            "(há {days} dia(s)).",
+                            "The registration for {domain} expired on {expiry} "
+                            "({days} day(s) ago).",
+                            domain=domain,
+                            expiry=expiry_raw,
+                            days=abs(int(days_left)),
                         ),
                         evidence=f"expiration: {expiry_raw}",
-                        recommendation=(
+                        recommendation=L(
+                            "Renove o domínio imediatamente. Um domínio expirado pode "
+                            "ser registrado novamente por um atacante, permitindo a "
+                            "tomada de controle de e-mail, sites e serviços que "
+                            "dependem dele.",
                             "Renew the domain immediately. An expired domain can be "
                             "re-registered by an attacker, enabling takeover of email, "
-                            "sites and services that depend on it."
+                            "sites and services that depend on it.",
                         ),
                         references=["https://about.rdap.org/"],
                         metadata={"domain": domain, "expiration": expiry_raw},
@@ -138,17 +173,25 @@ class WhoisRdap(Module):
                 findings.append(
                     ctx.finding(
                         self.id,
-                        "Domain expires soon",
+                        L("Domínio expira em breve", "Domain expires soon"),
                         Severity.MEDIUM,
-                        description=(
-                            f"The registration for {domain} expires on {expiry_raw} "
-                            f"(in {int(days_left)} day(s))."
+                        description=Lf(
+                            "O registro de {domain} expira em {expiry} "
+                            "(em {days} dia(s)).",
+                            "The registration for {domain} expires on {expiry} "
+                            "(in {days} day(s)).",
+                            domain=domain,
+                            expiry=expiry_raw,
+                            days=int(days_left),
                         ),
                         evidence=f"expiration: {expiry_raw}",
-                        recommendation=(
+                        recommendation=L(
+                            "Renove o domínio bem antes da expiração (idealmente "
+                            "habilite a renovação automática) para evitar um lapso "
+                            "acidental e uma possível tomada de controle do domínio.",
                             "Renew the domain well before expiry (ideally enable "
                             "auto-renew) to avoid an accidental lapse and possible "
-                            "domain takeover."
+                            "domain takeover.",
                         ),
                         references=["https://about.rdap.org/"],
                         metadata={"domain": domain, "expiration": expiry_raw},

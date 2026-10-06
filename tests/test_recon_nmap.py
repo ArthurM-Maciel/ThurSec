@@ -7,6 +7,7 @@ non-zero exit), so the tests are fast, deterministic and safe to run anywhere.
 
 import pytest
 
+from thursec.core import i18n
 from thursec.core.context import RunContext
 from thursec.core.finding import Severity
 from thursec.core.module import Category, Intensity
@@ -17,6 +18,18 @@ from thursec.modules.recon.nmap_scan import (
     _parse_xml,
     _safe_scripts,
 )
+
+
+@pytest.fixture(autouse=True)
+def _english_findings():
+    """Findings are i18n'd (pt by default). These tests assert the English
+    wording, so pin the language to 'en' and restore it afterwards."""
+    previous = i18n.get_lang()
+    i18n.set_lang("en")
+    try:
+        yield
+    finally:
+        i18n.set_lang(previous)
 
 # A realistic (trimmed) nmap -oX output: host up with three open ports, each
 # carrying service/product/version, plus one closed port that must be ignored.
