@@ -31,6 +31,7 @@ from urllib.parse import urlparse
 
 from ...core.context import RunContext
 from ...core.finding import Finding, Severity
+from ...core.i18n import L, Lf
 from ...core.module import Category, Intensity, Module
 from ...core.target import TargetError, validate_target
 
@@ -39,13 +40,21 @@ _DEFAULT_TIMEOUT = 10.0
 
 class CookieAudit(Module):
     id = "config_audit.cookies"
-    name = "Cookie security flags"
     category = Category.CONFIG_AUDIT
     intensity = Intensity.ACTIVE
-    description = (
-        "Audit Set-Cookie flags (Secure, HttpOnly, SameSite) from a single "
-        "read-only GET. Never logs cookie values."
-    )
+
+    @property
+    def name(self) -> str:
+        return L("Flags de segurança de cookies", "Cookie security flags")
+
+    @property
+    def description(self) -> str:
+        return L(
+            "Audita as flags Set-Cookie (Secure, HttpOnly, SameSite) a partir de "
+            "um único GET somente-leitura. Nunca registra os valores dos cookies.",
+            "Audit Set-Cookie flags (Secure, HttpOnly, SameSite) from a single "
+            "read-only GET. Never logs cookie values.",
+        )
 
     async def run(self, ctx: RunContext) -> list[Finding]:
         # Defense against argument injection / invalid targets: reject anything
@@ -58,15 +67,18 @@ class CookieAudit(Module):
             return [
                 ctx.finding(
                     self.id,
-                    "Refusing to scan: unsafe/invalid target",
+                    L("Recusando a varredura: alvo inseguro/inválido", "Refusing to scan: unsafe/invalid target"),
                     Severity.LOW,
-                    description=(
+                    description=L(
+                        "O alvo foi rejeitado antes de qualquer requisição porque "
+                        "não é um host/URL válido e poderia ser interpretado como "
+                        "uma opção de linha de comando.",
                         "The target was rejected before any request because it is "
                         "not a valid host/URL and could be interpreted as a "
-                        "command-line option."
+                        "command-line option.",
                     ),
                     evidence=str(e),
-                    recommendation="Provide a plain hostname, IP, CIDR, or URL.",
+                    recommendation=L("Forneça um hostname, IP, CIDR ou URL simples.", "Provide a plain hostname, IP, CIDR, or URL."),
                 )
             ]
 
@@ -86,13 +98,15 @@ class CookieAudit(Module):
             return [
                 ctx.finding(
                     self.id,
-                    "Could not complete GET request",
+                    L("Não foi possível completar a requisição GET", "Could not complete GET request"),
                     Severity.LOW,
-                    description=(
-                        f"Failed to send GET / to {host}:{port} over {scheme}."
+                    description=Lf(
+                        "Falha ao enviar GET / para {host}:{port} via {scheme}.",
+                        "Failed to send GET / to {host}:{port} over {scheme}.",
+                        host=host, port=port, scheme=scheme,
                     ),
                     evidence=f"{type(e).__name__}: {e}",
-                    recommendation="Verify the host serves HTTP(S) on this port.",
+                    recommendation=L("Verifique se o host oferece HTTP(S) nesta porta.", "Verify the host serves HTTP(S) on this port."),
                 )
             ]
 
@@ -100,15 +114,20 @@ class CookieAudit(Module):
             return [
                 ctx.finding(
                     self.id,
-                    "No cookies set by the response",
+                    L("Nenhum cookie definido pela resposta", "No cookies set by the response"),
                     Severity.INFO,
-                    description=(
-                        f"GET / to {host}:{port} returned no Set-Cookie headers, "
-                        "so there are no cookie flags to audit."
+                    description=Lf(
+                        "GET / para {host}:{port} não retornou cabeçalhos Set-Cookie, "
+                        "então não há flags de cookie para auditar.",
+                        "GET / to {host}:{port} returned no Set-Cookie headers, "
+                        "so there are no cookie flags to audit.",
+                        host=host, port=port,
                     ),
-                    recommendation=(
+                    recommendation=L(
+                        "Não é necessariamente um problema; verifique por outros "
+                        "meios se a aplicação deveria definir um cookie de sessão aqui.",
                         "Not necessarily a problem; verify out of band if the app "
-                        "is expected to set a session cookie here."
+                        "is expected to set a session cookie here.",
                     ),
                 )
             ]
@@ -141,16 +160,21 @@ class CookieAudit(Module):
             findings.append(
                 ctx.finding(
                     self.id,
-                    f"Cookie without Secure flag: {name}",
+                    Lf("Cookie sem a flag Secure: {name}", "Cookie without Secure flag: {name}", name=name),
                     Severity.MEDIUM,
-                    description=(
-                        f"Cookie '{name}' is set over HTTPS without the Secure "
-                        "attribute, so it may be sent over cleartext HTTP."
+                    description=Lf(
+                        "O cookie '{name}' é definido via HTTPS sem o atributo "
+                        "Secure, então pode ser enviado por HTTP em texto claro.",
+                        "Cookie '{name}' is set over HTTPS without the Secure "
+                        "attribute, so it may be sent over cleartext HTTP.",
+                        name=name,
                     ),
                     evidence=f"{name}: {observed}",
-                    recommendation=(
+                    recommendation=L(
+                        "Adicione o atributo Secure para que o cookie só seja "
+                        "enviado por HTTPS.",
                         "Add the Secure attribute so the cookie is only sent over "
-                        "HTTPS."
+                        "HTTPS.",
                     ),
                     metadata={"cookie": name, "flag": "Secure"},
                 )
@@ -161,17 +185,23 @@ class CookieAudit(Module):
             findings.append(
                 ctx.finding(
                     self.id,
-                    f"Cookie without HttpOnly flag: {name}",
+                    Lf("Cookie sem a flag HttpOnly: {name}", "Cookie without HttpOnly flag: {name}", name=name),
                     Severity.MEDIUM,
-                    description=(
-                        f"Cookie '{name}' lacks the HttpOnly attribute, so it is "
+                    description=Lf(
+                        "O cookie '{name}' não tem o atributo HttpOnly, então é "
+                        "acessível ao JavaScript (document.cookie) e exposto a "
+                        "roubo via XSS.",
+                        "Cookie '{name}' lacks the HttpOnly attribute, so it is "
                         "accessible to JavaScript (document.cookie) and exposed to "
-                        "theft via XSS."
+                        "theft via XSS.",
+                        name=name,
                     ),
                     evidence=f"{name}: {observed}",
-                    recommendation=(
+                    recommendation=L(
+                        "Adicione o atributo HttpOnly a menos que o cookie precise "
+                        "ser lido por scripts do lado do cliente.",
                         "Add the HttpOnly attribute unless the cookie must be read "
-                        "by client-side scripts."
+                        "by client-side scripts.",
                     ),
                     metadata={"cookie": name, "flag": "HttpOnly"},
                 )
@@ -183,15 +213,19 @@ class CookieAudit(Module):
             findings.append(
                 ctx.finding(
                     self.id,
-                    f"Cookie without SameSite attribute: {name}",
+                    Lf("Cookie sem o atributo SameSite: {name}", "Cookie without SameSite attribute: {name}", name=name),
                     Severity.LOW,
-                    description=(
-                        f"Cookie '{name}' does not set SameSite; relying on the "
-                        "browser default leaves CSRF behavior implicit."
+                    description=Lf(
+                        "O cookie '{name}' não define SameSite; depender do padrão "
+                        "do navegador deixa o comportamento de CSRF implícito.",
+                        "Cookie '{name}' does not set SameSite; relying on the "
+                        "browser default leaves CSRF behavior implicit.",
+                        name=name,
                     ),
                     evidence=f"{name}: {observed}",
-                    recommendation=(
-                        "Set SameSite explicitly (Lax or Strict) to mitigate CSRF."
+                    recommendation=L(
+                        "Defina SameSite explicitamente (Lax ou Strict) para mitigar CSRF.",
+                        "Set SameSite explicitly (Lax or Strict) to mitigate CSRF.",
                     ),
                     metadata={"cookie": name, "flag": "SameSite"},
                 )
@@ -200,17 +234,23 @@ class CookieAudit(Module):
             findings.append(
                 ctx.finding(
                     self.id,
-                    f"Cookie with SameSite=None but no Secure: {name}",
+                    Lf("Cookie com SameSite=None mas sem Secure: {name}", "Cookie with SameSite=None but no Secure: {name}", name=name),
                     Severity.MEDIUM,
-                    description=(
-                        f"Cookie '{name}' uses SameSite=None without Secure; modern "
+                    description=Lf(
+                        "O cookie '{name}' usa SameSite=None sem Secure; navegadores "
+                        "modernos rejeitam esses cookies, e isso desativa a proteção "
+                        "contra CSRF.",
+                        "Cookie '{name}' uses SameSite=None without Secure; modern "
                         "browsers reject such cookies, and it disables CSRF "
-                        "protection."
+                        "protection.",
+                        name=name,
                     ),
                     evidence=f"{name}: {observed}",
-                    recommendation=(
+                    recommendation=L(
+                        "Adicione Secure ao usar SameSite=None, ou mude para "
+                        "SameSite=Lax/Strict.",
                         "Add Secure when using SameSite=None, or switch to "
-                        "SameSite=Lax/Strict."
+                        "SameSite=Lax/Strict.",
                     ),
                     metadata={"cookie": name, "flag": "SameSite=None"},
                 )
@@ -221,9 +261,9 @@ class CookieAudit(Module):
             findings.append(
                 ctx.finding(
                     self.id,
-                    f"Cookie flags OK: {name}",
+                    Lf("Flags do cookie OK: {name}", "Cookie flags OK: {name}", name=name),
                     Severity.INFO,
-                    description=f"Cookie '{name}' sets the recommended flags.",
+                    description=Lf("O cookie '{name}' define as flags recomendadas.", "Cookie '{name}' sets the recommended flags.", name=name),
                     evidence=f"{name}: {observed}",
                     metadata={"cookie": name},
                 )

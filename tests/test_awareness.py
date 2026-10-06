@@ -24,6 +24,18 @@ from thursec.awareness import (
     render_landing_page,
     tally_clicks,
 )
+from thursec.core.i18n import get_lang, set_lang
+
+
+@pytest.fixture(autouse=True)
+def _force_en():
+    """The landing/e-mail assertions check English text; pin and restore it."""
+    previous = get_lang()
+    set_lang("en")
+    try:
+        yield
+    finally:
+        set_lang(previous)
 
 
 def _auth():

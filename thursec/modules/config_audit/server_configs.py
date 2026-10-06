@@ -20,6 +20,7 @@ from pathlib import Path
 
 from ...core.context import RunContext
 from ...core.finding import Finding, Severity
+from ...core.i18n import L, Lf
 from ...core.module import Category, Intensity, Module
 
 # Skip anything bigger than this — real config lives in modest text files, and
@@ -78,10 +79,12 @@ def _detect_type(path: Path, text: str) -> str | None:
 @dataclass(frozen=True, slots=True)
 class _Rule:
     config_type: str  # "nginx" or "sshd"
-    name: str  # short, stable title fragment
+    name_pt: str  # short title fragment (PT); raw directive tokens kept verbatim
+    name_en: str  # short, stable title fragment (EN) — also the metadata id
     pattern: re.Pattern[str]  # matched per-line
     severity: Severity
-    recommendation: str
+    recommendation_pt: str
+    recommendation_en: str
 
 
 def _nginx(value: str) -> str:
@@ -100,33 +103,45 @@ _RULES: list[_Rule] = [
     # ---- nginx -----------------------------------------------------------
     _Rule(
         "nginx",
+        "server_tokens on (divulgação de versão)",
         "server_tokens on (version disclosure)",
         re.compile(r"(?i)^\s*server_tokens\s+on\s*;"),
         Severity.LOW,
+        "Defina 'server_tokens off;' para que o nginx não divulgue sua versão "
+        "exata em respostas e páginas de erro.",
         "Set 'server_tokens off;' so nginx does not advertise its exact "
         "version in responses and error pages.",
     ),
     _Rule(
         "nginx",
+        "autoindex on (listagem de diretórios)",
         "autoindex on (directory listing)",
         re.compile(r"(?i)^\s*autoindex\s+on\s*;"),
         Severity.MEDIUM,
+        "Defina 'autoindex off;' (o padrão) para impedir que o nginx sirva "
+        "listagens de diretórios navegáveis que podem expor arquivos sensíveis.",
         "Set 'autoindex off;' (the default) to stop nginx from serving "
         "browsable directory listings that can expose sensitive files.",
     ),
     _Rule(
         "nginx",
+        "ssl_protocols permite TLS obsoleto",
         "ssl_protocols allows obsolete TLS",
         re.compile(r"(?i)^\s*ssl_protocols\b[^;]*\bTLSv1(?:\.1)?(?!\.\d)[^;]*;"),
         Severity.MEDIUM,
+        "Remova TLSv1 e TLSv1.1 do ssl_protocols; permita apenas TLSv1.2 e "
+        "TLSv1.3 (ex.: 'ssl_protocols TLSv1.2 TLSv1.3;').",
         "Remove TLSv1 and TLSv1.1 from ssl_protocols; allow only TLSv1.2 and "
         "TLSv1.3 (e.g. 'ssl_protocols TLSv1.2 TLSv1.3;').",
     ),
     _Rule(
         "nginx",
+        "ssl_ciphers permite cifras fracas",
         "ssl_ciphers allows weak ciphers",
         re.compile(r"(?i)^\s*ssl_ciphers\b[^;]*\b(?:RC4|MD5|NULL|EXPORT|DES)\b[^;]*;"),
         Severity.MEDIUM,
+        "Remova as cifras RC4/DES/MD5/NULL/EXPORT; use um conjunto de cifras "
+        "moderno e 'ssl_prefer_server_ciphers on;'.",
         "Drop RC4/DES/MD5/NULL/EXPORT ciphers; use a modern cipher suite and "
         "'ssl_prefer_server_ciphers on;'.",
     ),
@@ -134,40 +149,55 @@ _RULES: list[_Rule] = [
     _Rule(
         "sshd",
         "PermitRootLogin yes",
+        "PermitRootLogin yes",
         re.compile(r"(?i)^\s*PermitRootLogin\s+yes\b"),
         Severity.HIGH,
+        "Defina 'PermitRootLogin no' (ou 'prohibit-password'): nunca permita "
+        "logins interativos diretos de root via SSH.",
         "Set 'PermitRootLogin no' (or 'prohibit-password'): never allow direct "
         "interactive root logins over SSH.",
     ),
     _Rule(
         "sshd",
         "PermitEmptyPasswords yes",
+        "PermitEmptyPasswords yes",
         re.compile(r"(?i)^\s*PermitEmptyPasswords\s+yes\b"),
         Severity.CRITICAL,
+        "Defina 'PermitEmptyPasswords no': contas com senhas vazias nunca "
+        "devem ser acessíveis via SSH.",
         "Set 'PermitEmptyPasswords no': accounts with empty passwords must "
         "never be reachable over SSH.",
     ),
     _Rule(
         "sshd",
         "PasswordAuthentication yes",
+        "PasswordAuthentication yes",
         re.compile(r"(?i)^\s*PasswordAuthentication\s+yes\b"),
         Severity.MEDIUM,
+        "Prefira autenticação por chave: defina 'PasswordAuthentication no' "
+        "para eliminar brute-force de senha e credential-stuffing contra o SSH.",
         "Prefer key-based auth: set 'PasswordAuthentication no' to eliminate "
         "password brute-force and credential-stuffing against SSH.",
     ),
     _Rule(
         "sshd",
+        "Protocol 1 (SSHv1 legado)",
         "Protocol 1 (legacy SSHv1)",
         re.compile(r"(?i)^\s*Protocol\s+(?:1\b|.*\b1\b)"),
         Severity.HIGH,
+        "Remova 'Protocol 1': o protocolo SSH 1 é criptograficamente quebrado. "
+        "Use apenas o protocolo 2 (o padrão moderno).",
         "Remove 'Protocol 1': SSH protocol 1 is cryptographically broken. Use "
         "protocol 2 only (the modern default).",
     ),
     _Rule(
         "sshd",
         "X11Forwarding yes",
+        "X11Forwarding yes",
         re.compile(r"(?i)^\s*X11Forwarding\s+yes\b"),
         Severity.LOW,
+        "Defina 'X11Forwarding no' a menos que seja necessário: o "
+        "encaminhamento X11 amplia a superfície de ataque entre cliente e servidor.",
         "Set 'X11Forwarding no' unless required: X11 forwarding widens the "
         "attack surface between client and server.",
     ),
@@ -175,24 +205,51 @@ _RULES: list[_Rule] = [
 
 # Security headers we like to see present in an nginx config. Their absence is
 # only informational (they may legitimately live in an included file).
-_NGINX_EXPECTED_HEADERS: tuple[tuple[str, str], ...] = (
-    ("strict-transport-security", "Add HSTS to force HTTPS and prevent downgrade."),
-    ("x-content-type-options", "Set 'X-Content-Type-Options: nosniff' to stop MIME sniffing."),
-    ("x-frame-options", "Set X-Frame-Options (or CSP frame-ancestors) to prevent clickjacking."),
-    ("content-security-policy", "Add a Content-Security-Policy to mitigate XSS."),
+# header -> (recommendation PT, recommendation EN)
+_NGINX_EXPECTED_HEADERS: tuple[tuple[str, str, str], ...] = (
+    (
+        "strict-transport-security",
+        "Adicione HSTS para forçar HTTPS e impedir downgrade.",
+        "Add HSTS to force HTTPS and prevent downgrade.",
+    ),
+    (
+        "x-content-type-options",
+        "Defina 'X-Content-Type-Options: nosniff' para impedir MIME sniffing.",
+        "Set 'X-Content-Type-Options: nosniff' to stop MIME sniffing.",
+    ),
+    (
+        "x-frame-options",
+        "Defina X-Frame-Options (ou CSP frame-ancestors) para prevenir clickjacking.",
+        "Set X-Frame-Options (or CSP frame-ancestors) to prevent clickjacking.",
+    ),
+    (
+        "content-security-policy",
+        "Adicione um Content-Security-Policy para mitigar XSS.",
+        "Add a Content-Security-Policy to mitigate XSS.",
+    ),
 )
 
 
 class ServerConfigAudit(Module):
     id = "config_audit.server_configs"
-    name = "Server config linter (nginx/sshd)"
     category = Category.CONFIG_AUDIT
     intensity = Intensity.PASSIVE
-    description = (
-        "Lint local nginx and sshd configuration files for insecure directives "
-        "(server_tokens, autoindex, weak TLS, PermitRootLogin, empty passwords, "
-        "legacy protocols) using named regex rules."
-    )
+
+    @property
+    def name(self) -> str:
+        return L("Linter de configuração de servidor (nginx/sshd)", "Server config linter (nginx/sshd)")
+
+    @property
+    def description(self) -> str:
+        return L(
+            "Analisa arquivos de configuração locais de nginx e sshd em busca de "
+            "diretivas inseguras (server_tokens, autoindex, TLS fraco, "
+            "PermitRootLogin, senhas vazias, protocolos legados) usando regras de "
+            "regex nomeadas.",
+            "Lint local nginx and sshd configuration files for insecure directives "
+            "(server_tokens, autoindex, weak TLS, PermitRootLogin, empty passwords, "
+            "legacy protocols) using named regex rules.",
+        )
 
     async def run(self, ctx: RunContext) -> list[Finding]:
         root = Path((ctx.target or ".").strip() or ".").expanduser()
@@ -202,9 +259,9 @@ class ServerConfigAudit(Module):
             return [
                 ctx.finding(
                     self.id,
-                    "Config target does not exist",
+                    L("O alvo de configuração não existe", "Config target does not exist"),
                     Severity.INFO,
-                    description=f"Path {root!s} was not found; nothing to lint.",
+                    description=Lf("O caminho {root} não foi encontrado; nada a analisar.", "Path {root} was not found; nothing to lint.", root=str(root)),
                 )
             ]
 
@@ -238,22 +295,26 @@ def _lint(
         for rule in rules:
             if not rule.pattern.search(line):
                 continue
+            rule_name = L(rule.name_pt, rule.name_en)
             findings.append(
                 ctx.finding(
                     module_id,
-                    f"{ctype}: {rule.name} in {rel}",
+                    Lf("{ctype}: {name} em {rel}", "{ctype}: {name} in {rel}", ctype=ctype, name=rule_name, rel=rel),
                     rule.severity,
-                    description=(
-                        f"Insecure {ctype} directive matching '{rule.name}' was "
-                        f"found in {rel} at line {lineno}."
+                    description=Lf(
+                        "Diretiva {ctype} insegura correspondente a '{name}' foi "
+                        "encontrada em {rel} na linha {lineno}.",
+                        "Insecure {ctype} directive matching '{name}' was "
+                        "found in {rel} at line {lineno}.",
+                        ctype=ctype, name=rule_name, rel=rel, lineno=lineno,
                     ),
                     evidence=f"{rel}:{lineno}: {line[:200]}",
-                    recommendation=rule.recommendation,
+                    recommendation=L(rule.recommendation_pt, rule.recommendation_en),
                     metadata={
                         "file": rel,
                         "line": lineno,
                         "config_type": ctype,
-                        "rule": rule.name,
+                        "rule": rule.name_en,
                     },
                 )
             )
@@ -276,20 +337,23 @@ def _missing_headers(
     if "listen" not in lowered:
         return []
     out: list[Finding] = []
-    for header, rec in _NGINX_EXPECTED_HEADERS:
+    for header, rec_pt, rec_en in _NGINX_EXPECTED_HEADERS:
         if header in lowered:
             continue
         out.append(
             ctx.finding(
                 module_id,
-                f"nginx: missing security header '{header}' in {rel}",
+                Lf("nginx: cabeçalho de segurança ausente '{header}' em {rel}", "nginx: missing security header '{header}' in {rel}", header=header, rel=rel),
                 Severity.INFO,
-                description=(
-                    f"No 'add_header {header}' directive was found in {rel}. "
-                    "It may be set in an included file; verify it is present."
+                description=Lf(
+                    "Nenhuma diretiva 'add_header {header}' foi encontrada em {rel}. "
+                    "Ela pode estar definida em um arquivo incluído; verifique se está presente.",
+                    "No 'add_header {header}' directive was found in {rel}. "
+                    "It may be set in an included file; verify it is present.",
+                    header=header, rel=rel,
                 ),
-                evidence=f"{rel}: '{header}' not declared",
-                recommendation=rec,
+                evidence=Lf("{rel}: '{header}' não declarado", "{rel}: '{header}' not declared", rel=rel, header=header),
+                recommendation=L(rec_pt, rec_en),
                 metadata={"file": rel, "config_type": "nginx", "missing_header": header},
             )
         )

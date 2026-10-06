@@ -44,6 +44,7 @@ from dataclasses import dataclass
 
 from ...core.context import RunContext
 from ...core.finding import Finding, Severity
+from ...core.i18n import L, Lf
 from ...core.module import Category, Intensity, Module
 
 _USER_AGENT = "ThurSec/0.1"
@@ -68,15 +69,26 @@ class HttpResponse:
 
 class SupabaseAudit(Module):
     id = "config_audit.supabase"
-    name = "Supabase posture audit"
     category = Category.CONFIG_AUDIT
     intensity = Intensity.PASSIVE
-    description = (
-        "Audit the security posture of YOUR OWN Supabase project using YOUR OWN "
-        "credentials (anon and/or service_role key). Passive, read-only: checks "
-        "anonymous table exposure (RLS), service_role key misuse, and public "
-        "storage buckets. Never run against a project you do not own."
-    )
+
+    @property
+    def name(self) -> str:
+        return L("Auditoria de postura do Supabase", "Supabase posture audit")
+
+    @property
+    def description(self) -> str:
+        return L(
+            "Audita a postura de segurança do SEU PRÓPRIO projeto Supabase usando "
+            "as SUAS PRÓPRIAS credenciais (chave anon e/ou service_role). Passiva, "
+            "somente-leitura: verifica exposição anônima de tabelas (RLS), uso "
+            "indevido da chave service_role e buckets de armazenamento públicos. "
+            "Nunca execute contra um projeto que você não possui.",
+            "Audit the security posture of YOUR OWN Supabase project using YOUR OWN "
+            "credentials (anon and/or service_role key). Passive, read-only: checks "
+            "anonymous table exposure (RLS), service_role key misuse, and public "
+            "storage buckets. Never run against a project you do not own.",
+        )
 
     async def run(self, ctx: RunContext) -> list[Finding]:
         base = _base_url(ctx.options.get("supabase_url") or ctx.target)
@@ -90,14 +102,17 @@ class SupabaseAudit(Module):
             return [
                 ctx.finding(
                     self.id,
-                    "No Supabase project URL provided",
+                    L("Nenhuma URL de projeto Supabase fornecida", "No Supabase project URL provided"),
                     Severity.INFO,
-                    description=(
+                    description=L(
+                        "Forneça a URL do seu próprio projeto Supabase pela opção "
+                        "'supabase_url' ou como alvo "
+                        "(ex.: https://<ref>.supabase.co).",
                         "Supply the URL of your own Supabase project via the "
                         "'supabase_url' option or as the target "
-                        "(e.g. https://<ref>.supabase.co)."
+                        "(e.g. https://<ref>.supabase.co).",
                     ),
-                    recommendation="Provide your project URL and an API key.",
+                    recommendation=L("Forneça a URL do seu projeto e uma chave de API.", "Provide your project URL and an API key."),
                 )
             ]
 
@@ -105,15 +120,19 @@ class SupabaseAudit(Module):
             return [
                 ctx.finding(
                     self.id,
-                    "No Supabase credentials provided",
+                    L("Nenhuma credencial do Supabase fornecida", "No Supabase credentials provided"),
                     Severity.INFO,
-                    description=(
+                    description=L(
+                        "Esta auditoria lê a configuração do SEU PRÓPRIO projeto e "
+                        "precisa de uma credencial que você possui. Forneça 'anon_key' "
+                        "e/ou 'service_role_key' (opção ou env SUPABASE_ANON_KEY / "
+                        "SUPABASE_SERVICE_ROLE_KEY).",
                         "This audit reads your OWN project's configuration and "
                         "needs a credential you own. Provide 'anon_key' and/or "
                         "'service_role_key' (option or env SUPABASE_ANON_KEY / "
-                        "SUPABASE_SERVICE_ROLE_KEY)."
+                        "SUPABASE_SERVICE_ROLE_KEY).",
                     ),
-                    recommendation="Provide the anon and/or service_role key.",
+                    recommendation=L("Forneça a chave anon e/ou service_role.", "Provide the anon and/or service_role key."),
                 )
             ]
 
@@ -136,17 +155,20 @@ class SupabaseAudit(Module):
                 self._request, "GET", f"{base}/rest/v1/", anon_key
             )
         except Exception as e:
-            return [self._error_finding(ctx, "anonymous REST schema lookup", anon_key, e)]
+            return [self._error_finding(ctx, L("a consulta anônima do schema REST", "anonymous REST schema lookup"), anon_key, e)]
 
         if spec.status in (401, 403):
             return [
                 ctx.finding(
                     self.id,
-                    "Anonymous access to REST API is rejected",
+                    L("Acesso anônimo à API REST é rejeitado", "Anonymous access to REST API is rejected"),
                     Severity.INFO,
-                    description=(
+                    description=Lf(
+                        "A chave anon não conseguiu ler o schema do PostgREST "
+                        "(HTTP {status}); a API não é navegável anonimamente.",
                         "The anon key could not read the PostgREST schema "
-                        f"(HTTP {spec.status}); the API is not anonymously browsable."
+                        "(HTTP {status}); the API is not anonymously browsable.",
+                        status=spec.status,
                     ),
                     evidence=f"GET /rest/v1/ -> {spec.status} (anon {_mask(anon_key)})",
                 )
@@ -157,11 +179,13 @@ class SupabaseAudit(Module):
             return [
                 ctx.finding(
                     self.id,
-                    "No tables discoverable via anonymous REST schema",
+                    L("Nenhuma tabela detectável pelo schema REST anônimo", "No tables discoverable via anonymous REST schema"),
                     Severity.INFO,
-                    description=(
+                    description=L(
+                        "O schema anônimo do PostgREST não expôs nenhuma definição "
+                        "de tabela para sondar.",
                         "The anonymous PostgREST schema exposed no table "
-                        "definitions to probe."
+                        "definitions to probe.",
                     ),
                     evidence=f"GET /rest/v1/ -> {spec.status} (anon {_mask(anon_key)})",
                 )
@@ -188,13 +212,17 @@ class SupabaseAudit(Module):
             findings.append(
                 ctx.finding(
                     self.id,
-                    f"Anonymous role can read data from {len(exposed)} table(s)",
+                    Lf("A role anônima consegue ler dados de {n} tabela(s)", "Anonymous role can read data from {n} table(s)", n=len(exposed)),
                     Severity.HIGH,
-                    description=(
+                    description=L(
+                        "A chave anônima (anon) retornou linhas reais destas "
+                        "tabelas, o que significa que o Row Level Security está "
+                        "desativado ou uma política SELECT é permissiva demais. "
+                        "Qualquer pessoa com a chave anon pública pode ler esses dados.",
                         "The anonymous (anon) key returned actual rows from these "
                         "tables, which means Row Level Security is disabled or a "
                         "SELECT policy is too permissive. Anyone with the public "
-                        "anon key can read this data."
+                        "anon key can read this data.",
                     ),
                     evidence=evidence,
                     recommendation=(
@@ -216,11 +244,14 @@ class SupabaseAudit(Module):
             findings.append(
                 ctx.finding(
                     self.id,
-                    "No anonymous data exposure detected",
+                    L("Nenhuma exposição anônima de dados detectada", "No anonymous data exposure detected"),
                     Severity.INFO,
-                    description=(
-                        f"Probed {probed} table(s) with the anon key; none returned "
-                        "rows, consistent with RLS being enforced."
+                    description=Lf(
+                        "Sondou {probed} tabela(s) com a chave anon; nenhuma "
+                        "retornou linhas, consistente com RLS aplicado.",
+                        "Probed {probed} table(s) with the anon key; none returned "
+                        "rows, consistent with RLS being enforced.",
+                        probed=probed,
                     ),
                     evidence=f"tables_probed={probed} (anon {_mask(anon_key)})",
                     metadata={"tables_probed": probed, "anon_key": _mask(anon_key)},
@@ -240,19 +271,27 @@ class SupabaseAudit(Module):
             findings.append(
                 ctx.finding(
                     self.id,
-                    "service_role key is used in client-side code",
+                    L("a chave service_role é usada em código do lado do cliente (client-side)", "service_role key is used in client-side code"),
                     Severity.CRITICAL,
-                    description=(
+                    description=L(
+                        "A chave service_role ignora completamente o Row Level "
+                        "Security. Se ela for distribuída para navegadores / apps "
+                        "móveis, qualquer um pode extraí-la e obter acesso total de "
+                        "leitura/escrita ao banco de dados.",
                         "The service_role key bypasses Row Level Security entirely. "
                         "If it is shipped to browsers / mobile apps, anyone can "
-                        "extract it and gain full read/write access to the database."
+                        "extract it and gain full read/write access to the database.",
                     ),
                     evidence=f"service_role key {_mask(service_key)} (role={role})",
-                    recommendation=(
+                    recommendation=L(
+                        "Remova a chave service_role de todo o código do cliente "
+                        "imediatamente, rotacione-a no painel do Supabase e use a "
+                        "chave anon (com RLS) nos clientes. Mantenha a service_role "
+                        "apenas em servidores confiáveis / edge functions.",
                         "Remove the service_role key from all client code "
                         "immediately, rotate it in the Supabase dashboard, and use "
                         "the anon key (with RLS) in clients. Keep service_role only "
-                        "on trusted servers / edge functions."
+                        "on trusted servers / edge functions.",
                     ),
                     references=[
                         "https://supabase.com/docs/guides/api/api-keys"
@@ -264,18 +303,25 @@ class SupabaseAudit(Module):
             findings.append(
                 ctx.finding(
                     self.id,
-                    "service_role key provided — ensure it stays server-side",
+                    L("chave service_role fornecida — garanta que ela permaneça no servidor (server-side)", "service_role key provided — ensure it stays server-side"),
                     Severity.INFO,
-                    description=(
+                    description=L(
+                        "Uma chave service_role foi fornecida para esta auditoria. "
+                        "Ela ignora o RLS e nunca deve chegar a um navegador, app "
+                        "móvel ou repositório público. Defina "
+                        "'service_key_in_client: true' se ela for usada no cliente "
+                        "para escalar este achado.",
                         "A service_role key was supplied for this audit. It bypasses "
                         "RLS and must never reach a browser, mobile app, or public "
                         "repository. Set 'service_key_in_client: true' if it is used "
-                        "client-side to escalate this finding."
+                        "client-side to escalate this finding.",
                     ),
                     evidence=f"service_role key {_mask(service_key)} (role={role})",
-                    recommendation=(
+                    recommendation=L(
+                        "Armazene a chave service_role apenas em ambientes de "
+                        "servidor confiáveis e rotacione-a se ela já tiver sido exposta.",
                         "Store the service_role key only in trusted server "
-                        "environments and rotate it if it has ever been exposed."
+                        "environments and rotate it if it has ever been exposed.",
                     ),
                     metadata={"service_role_key": _mask(service_key), "role": role},
                 )
@@ -298,18 +344,22 @@ class SupabaseAudit(Module):
                 self._request, "GET", f"{base}/storage/v1/bucket", key
             )
         except Exception as e:
-            return [self._error_finding(ctx, "storage bucket listing", key, e)]
+            return [self._error_finding(ctx, L("a listagem de buckets de armazenamento", "storage bucket listing"), key, e)]
 
         if resp.status in (401, 403):
             return [
                 ctx.finding(
                     self.id,
-                    "Storage bucket listing not permitted for this key",
+                    L("Listagem de buckets de armazenamento não permitida para esta chave", "Storage bucket listing not permitted for this key"),
                     Severity.INFO,
-                    description=(
-                        f"Listing buckets returned HTTP {resp.status}; the supplied "
+                    description=Lf(
+                        "A listagem de buckets retornou HTTP {status}; a chave "
+                        "fornecida pode não ter acesso ao armazenamento. Use a chave "
+                        "service_role para enumerar os buckets.",
+                        "Listing buckets returned HTTP {status}; the supplied "
                         "key may lack storage access. Use the service_role key to "
-                        "enumerate buckets."
+                        "enumerate buckets.",
+                        status=resp.status,
                     ),
                     evidence=f"GET /storage/v1/bucket -> {resp.status} ({_mask(key)})",
                 )
@@ -323,7 +373,7 @@ class SupabaseAudit(Module):
             return [
                 ctx.finding(
                     self.id,
-                    "Could not parse storage bucket listing",
+                    L("Não foi possível interpretar a listagem de buckets de armazenamento", "Could not parse storage bucket listing"),
                     Severity.LOW,
                     evidence=f"GET /storage/v1/bucket -> {resp.status} ({_mask(key)})",
                 )
@@ -338,9 +388,9 @@ class SupabaseAudit(Module):
             return [
                 ctx.finding(
                     self.id,
-                    "No public storage buckets",
+                    L("Nenhum bucket de armazenamento público", "No public storage buckets"),
                     Severity.INFO,
-                    description=f"All {len(data)} storage bucket(s) are private.",
+                    description=Lf("Todos os {n} bucket(s) de armazenamento são privados.", "All {n} storage bucket(s) are private.", n=len(data)),
                     evidence=f"buckets={len(data)} ({_mask(key)})",
                     metadata={"bucket_count": len(data)},
                 )
@@ -348,17 +398,24 @@ class SupabaseAudit(Module):
         return [
             ctx.finding(
                 self.id,
-                f"{len(public)} public storage bucket(s)",
+                Lf("{n} bucket(s) de armazenamento público(s)", "{n} public storage bucket(s)", n=len(public)),
                 Severity.MEDIUM,
-                description=(
+                description=L(
+                    "Estes buckets de armazenamento estão marcados como públicos, "
+                    "então seus objetos podem ser lidos por qualquer um que tenha a "
+                    "URL. Confirme que eles contêm apenas dados destinados a serem "
+                    "públicos.",
                     "These storage buckets are marked public, so their objects are "
                     "readable by anyone with the URL. Confirm they hold only data "
-                    "meant to be public."
+                    "meant to be public.",
                 ),
                 evidence="\n".join(public),
-                recommendation=(
+                recommendation=L(
+                    "Torne os buckets privados e sirva os arquivos via URLs "
+                    "assinadas, a menos que o conteúdo seja genuinamente público. "
+                    "Aplique políticas de RLS de armazenamento.",
                     "Make buckets private and serve files via signed URLs unless the "
-                    "content is genuinely public. Apply storage RLS policies."
+                    "content is genuinely public. Apply storage RLS policies.",
                 ),
                 references=["https://supabase.com/docs/guides/storage/security/access-control"],
                 metadata={"public_buckets": public, "bucket_count": len(data)},
@@ -373,7 +430,7 @@ class SupabaseAudit(Module):
             return [
                 ctx.finding(
                     self.id,
-                    "Could not fetch project URL headers",
+                    L("Não foi possível obter os cabeçalhos da URL do projeto", "Could not fetch project URL headers"),
                     Severity.LOW,
                     evidence=f"{type(e).__name__}: {e}",
                 )
@@ -384,12 +441,13 @@ class SupabaseAudit(Module):
             findings.append(
                 ctx.finding(
                     self.id,
-                    "Project URL missing Strict-Transport-Security header",
+                    L("URL do projeto sem o cabeçalho Strict-Transport-Security", "Project URL missing Strict-Transport-Security header"),
                     Severity.LOW,
-                    description=(
-                        "The Supabase project endpoint did not return an HSTS header."
+                    description=L(
+                        "O endpoint do projeto Supabase não retornou um cabeçalho HSTS.",
+                        "The Supabase project endpoint did not return an HSTS header.",
                     ),
-                    recommendation="Ensure HTTPS is enforced for all API traffic.",
+                    recommendation=L("Garanta que o HTTPS seja aplicado em todo o tráfego da API.", "Ensure HTTPS is enforced for all API traffic."),
                 )
             )
         return findings
@@ -400,14 +458,17 @@ class SupabaseAudit(Module):
     ) -> Finding:
         return ctx.finding(
             self.id,
-            f"Could not complete {what}",
+            Lf("Não foi possível completar {what}", "Could not complete {what}", what=what),
             Severity.LOW,
-            description=(
-                f"The {what} did not complete. This can mean an invalid credential, "
-                "network issue, or that the endpoint is unreachable."
+            description=Lf(
+                "{what} não foi concluído. Isso pode indicar uma credencial "
+                "inválida, um problema de rede, ou que o endpoint está inacessível.",
+                "The {what} did not complete. This can mean an invalid credential, "
+                "network issue, or that the endpoint is unreachable.",
+                what=what,
             ),
             evidence=f"{type(exc).__name__}: {exc} ({_mask(key)})",
-            recommendation="Verify the project URL and that the key is valid.",
+            recommendation=L("Verifique a URL do projeto e se a chave é válida.", "Verify the project URL and that the key is valid."),
         )
 
     # --- isolable HTTP layer (monkeypatched in tests) ----------------------

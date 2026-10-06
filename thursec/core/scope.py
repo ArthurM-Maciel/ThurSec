@@ -27,6 +27,8 @@ from datetime import date, datetime
 from pathlib import Path
 from typing import Iterable
 
+from .i18n import L, Lf
+
 
 class ScopeError(Exception):
     """Raised when an action is attempted outside the authorized scope."""
@@ -58,13 +60,18 @@ class Scope:
 
         p = Path(path)
         if not p.exists():
-            raise ScopeError(f"Scope file not found: {p}")
+            raise ScopeError(Lf("Arquivo de escopo não encontrado: {p}", "Scope file not found: {p}", p=p))
         data = yaml.safe_load(p.read_text()) or {}
 
         missing = [k for k in ("engagement", "authorized_by", "targets") if not data.get(k)]
         if missing:
             raise ScopeError(
-                f"Scope file {p} is missing required field(s): {', '.join(missing)}"
+                Lf(
+                    "Arquivo de escopo {p} está sem o(s) campo(s) obrigatório(s): {fields}",
+                    "Scope file {p} is missing required field(s): {fields}",
+                    p=p,
+                    fields=", ".join(missing),
+                )
             )
 
         scope = cls(
@@ -74,7 +81,7 @@ class Scope:
             expires=_parse_date(data.get("expires")),
         )
         if not scope.targets:
-            raise ScopeError(f"Scope file {p} lists no targets.")
+            raise ScopeError(Lf("Arquivo de escopo {p} não lista alvos.", "Scope file {p} lists no targets.", p=p))
         return scope
 
     # --- checks ------------------------------------------------------------
@@ -94,13 +101,26 @@ class Scope:
         """Raise ScopeError unless ``target`` is authorized and scope is valid."""
         if self.is_expired:
             raise ScopeError(
-                f"Scope for engagement {self.engagement!r} expired on {self.expires}."
+                Lf(
+                    "O escopo do engajamento {engagement!r} expirou em {expires}.",
+                    "Scope for engagement {engagement!r} expired on {expires}.",
+                    engagement=self.engagement,
+                    expires=self.expires,
+                )
             )
         if not self.contains(target):
             raise ScopeError(
-                f"Target {target!r} is NOT in the authorized scope "
-                f"({self.engagement!r}). Refusing to run. "
-                f"Add it to the scope file only if you are authorized to test it."
+                Lf(
+                    "O alvo {target!r} NÃO está no escopo autorizado "
+                    "({engagement!r}). Recusando a execução. "
+                    "Adicione-o ao arquivo de escopo apenas se você estiver "
+                    "autorizado a testá-lo.",
+                    "Target {target!r} is NOT in the authorized scope "
+                    "({engagement!r}). Refusing to run. "
+                    "Add it to the scope file only if you are authorized to test it.",
+                    target=target,
+                    engagement=self.engagement,
+                )
             )
 
     def summary(self) -> str:
