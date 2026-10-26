@@ -19,14 +19,20 @@ the nmap and nuclei modules.
 from __future__ import annotations
 
 import asyncio
-from urllib.parse import urlparse
+import ssl
 
 from ... import __version__
-from ...core.context import RunContext
+from ...core.context import RunContext, coerce_bool, coerce_timeout
 from ...core.finding import Finding, Severity
-from ...core.i18n import L
+from ...core.i18n import L, Lf
 from ...core.module import Category, Intensity, Module
-from ...core.target import TargetError, validate_target
+from ...core.target import (
+    TargetError,
+    is_network_target,
+    parse_endpoint,
+    validate_target,
+)
+from ...core.tls import cert_verification_finding, mark_unverified, tls_context
 
 _USER_AGENT = f"ThurSec/{__version__}"
 
@@ -178,43 +184,114 @@ class HttpMethods(Module):
                 )
             ]
 
-        scheme, host, port = _parse_target(ctx.target, ctx.options)
-
-        try:
-            status, headers = await asyncio.to_thread(
-                self._options,
-                host,
-                port,
-                scheme,
-                float(ctx.options.get("timeout", _DEFAULT_TIMEOUT)),
-            )
-        except Exception as e:
-            # Connection refused, timeout, DNS failure, TLS error, ... — surface
-            # as a handled finding; never let it crash the run.
+        if is_network_target(ctx.target):
+            # Uma faixa não é um host: auditar o endereço de rede e rotular o
+            # achado com o CIDR daria um relatório sobre 254 hosts tirado de um.
             return [
                 ctx.finding(
                     self.id,
                     L(
-                        "Não foi possível completar a requisição OPTIONS",
-                        "Could not complete OPTIONS request",
+                        "Alvo é uma faixa de rede, não um host",
+                        "Target is a network range, not a host",
                     ),
-                    Severity.LOW,
-                    description=L(
-                        f"Falha ao enviar OPTIONS / para {host}:{port} via {scheme}.",
-                        f"Failed to send OPTIONS / to {host}:{port} over {scheme}.",
+                    Severity.INFO,
+                    description=Lf(
+                        "{t} é uma faixa; este módulo audita um host por vez.",
+                        "{t} is a range; this module audits one host at a time.",
+                        t=ctx.target,
                     ),
-                    evidence=f"{type(e).__name__}: {e}",
                     recommendation=L(
-                        "Verifique se o host serve HTTP(S) nesta porta.",
-                        "Verify the host serves HTTP(S) on this port.",
+                        "Rode o recon.nmap na faixa para descobrir os hosts, e "
+                        "este módulo contra cada host de interesse.",
+                        "Run recon.nmap over the range to discover hosts, then "
+                        "this module against each host of interest.",
                     ),
                 )
             ]
 
-        findings: list[Finding] = []
+        scheme, host, port = parse_endpoint(ctx.target, ctx.options)
+        timeout = coerce_timeout(ctx.options.get("timeout"), _DEFAULT_TIMEOUT)
+        insecure = coerce_bool(ctx.options.get("insecure_tls"), False)
+
+        # A verificação só é dispensada na *repetição*, depois que o certificado
+        # comprovadamente falhou: a bandeira não deve rebaixar uma conexão que
+        # teria sido verificada sem problema.
+        prefix: list[Finding] = []
+        verified = True
+        try:
+            status, headers = await asyncio.to_thread(
+                self._options, host, port, scheme, timeout, True
+            )
+        except ssl.SSLCertVerificationError as e:
+            # Um certificado recusado é defeito do alvo, não "porta errada":
+            # cair no except genérico mandava o operador conferir se o host
+            # serve HTTP(S) nessa porta, quando o host serve e o problema é
+            # o certificado. Mesma leitura que o tls_headers faz.
+            if not insecure:
+                return [
+                    cert_verification_finding(
+                        ctx, self.id, e, host, port, insecure=insecure
+                    )
+                ]
+            verified = False
+            try:
+                # Mesmo degrau que o tls_headers: primeiro dispensa só o nome,
+                # mantendo cadeia e datas validadas. Cair direto para CERT_NONE
+                # faria a mesma bandeira valer dois níveis de confiança na
+                # mesma execução — e aceitaria o certificado de qualquer um.
+                try:
+                    status, headers = await asyncio.to_thread(
+                        self._options, host, port, scheme, timeout, True, False
+                    )
+                except ssl.SSLError:
+                    status, headers = await asyncio.to_thread(
+                        self._options, host, port, scheme, timeout, False, False
+                    )
+            except Exception as retry_error:
+                # A repetição também falhou. O achado do certificado descreve
+                # só o defeito do alvo; que esta auditoria não saiu do lugar é
+                # o que diz o achado logo abaixo.
+                return [
+                    cert_verification_finding(
+                        ctx, self.id, e, host, port, insecure=insecure
+                    ),
+                    self._request_failure(ctx, retry_error, host, port, scheme),
+                ]
+            prefix.append(
+                cert_verification_finding(
+                    ctx, self.id, e, host, port, insecure=insecure
+                )
+            )
+        except Exception as e:
+            # Connection refused, timeout, DNS failure, ... — surface as a
+            # handled finding; never let it crash the run.
+            return [self._request_failure(ctx, e, host, port, scheme)]
+
+        findings: list[Finding] = list(prefix)
         findings.extend(self._check_methods(ctx, headers, status))
         findings.extend(self._check_info_leak(ctx, headers))
-        return findings
+        return mark_unverified(findings, verified)
+
+    def _request_failure(
+        self, ctx: RunContext, error: BaseException, host: str, port: int, scheme: str
+    ) -> Finding:
+        return ctx.finding(
+            self.id,
+            L(
+                "Não foi possível completar a requisição OPTIONS",
+                "Could not complete OPTIONS request",
+            ),
+            Severity.LOW,
+            description=L(
+                f"Falha ao enviar OPTIONS / para {host}:{port} via {scheme}.",
+                f"Failed to send OPTIONS / to {host}:{port} over {scheme}.",
+            ),
+            evidence=f"{type(error).__name__}: {error}",
+            recommendation=L(
+                "Verifique se o host serve HTTP(S) nesta porta.",
+                "Verify the host serves HTTP(S) on this port.",
+            ),
+        )
 
     # --- checks ------------------------------------------------------------
     def _check_methods(
@@ -325,7 +402,13 @@ class HttpMethods(Module):
 
     # --- HTTP layer (isolated so tests can monkeypatch it) -----------------
     def _options(
-        self, host: str, port: int, scheme: str, timeout: float = _DEFAULT_TIMEOUT
+        self,
+        host: str,
+        port: int,
+        scheme: str,
+        timeout: float = _DEFAULT_TIMEOUT,
+        verify: bool = True,
+        check_hostname: bool = True,
     ) -> tuple[int, dict[str, str]]:
         """Send a single ``OPTIONS /`` and return ``(status, headers)``.
 
@@ -336,7 +419,9 @@ class HttpMethods(Module):
         import http.client
 
         if scheme == "https":
-            conn = http.client.HTTPSConnection(host, port, timeout=timeout)
+            conn = http.client.HTTPSConnection(
+                host, port, timeout=timeout, context=tls_context(verify, check_hostname)
+            )
         else:
             conn = http.client.HTTPConnection(host, port, timeout=timeout)
         try:
@@ -350,40 +435,6 @@ class HttpMethods(Module):
 
 
 # --- helpers ---------------------------------------------------------------
-def _parse_target(target: str, options: dict) -> tuple[str, str, int]:
-    """Derive ``(scheme, host, port)`` from the target and options.
-
-    Understands a full URL (scheme/host/port honored), a bare ``host`` and a
-    ``host:port``. Defaults to https/443; ``http`` with no port uses 80.
-    ``ctx.options['port']`` overrides a port that is otherwise unspecified.
-    """
-    t = target.strip()
-    scheme = "https"
-    port: int | None = None
-
-    if "://" in t:
-        parsed = urlparse(t)
-        scheme = (parsed.scheme or "https").lower()
-        host = parsed.hostname or ""
-        port = parsed.port
-    elif t.count(":") == 1:
-        host, _, p = t.partition(":")
-        try:
-            port = int(p)
-        except ValueError:
-            port = None
-    else:
-        host = t
-
-    if "port" in options and port is None:
-        try:
-            port = int(options["port"])
-        except (TypeError, ValueError):
-            port = None
-
-    if port is None:
-        port = 443 if scheme == "https" else 80
-    return scheme, host, port
 
 
 def _get_header(headers: dict[str, str], name: str) -> str:

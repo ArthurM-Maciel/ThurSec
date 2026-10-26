@@ -24,7 +24,7 @@ from __future__ import annotations
 import json
 import shlex
 
-from ...core.context import RunContext, coerce_timeout
+from ...core.context import RunContext, coerce_bool, coerce_timeout
 from ...core.finding import Finding, Severity
 from ...core.i18n import L, Lf
 from ...core.module import Category, Intensity, Module
@@ -77,7 +77,7 @@ class NucleiScan(Module):
 
     async def run(self, ctx: RunContext) -> list[Finding]:
         timeout = coerce_timeout(ctx.options.get("timeout"), _DEFAULT_TIMEOUT)
-        allow_intrusive = bool(ctx.options.get("allow_intrusive", False))
+        allow_intrusive = coerce_bool(ctx.options.get("allow_intrusive"), False)
 
         # Defense against argument injection: a target shaped like a flag
         # (e.g. "-config", "-H") would be consumed by nuclei as an option rather

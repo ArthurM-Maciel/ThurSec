@@ -24,8 +24,18 @@ from pathlib import Path
 
 import ipaddress
 import re
+from urllib.parse import urlparse
 
-__all__ = ["TargetError", "validate_target"]
+__all__ = [
+    "TargetError",
+    "coerce_port",
+    "is_network_target",
+    "split_authority",
+    "looks_like_cidr",
+    "looks_like_local_path",
+    "parse_endpoint",
+    "validate_target",
+]
 
 
 class TargetError(Exception):
@@ -126,6 +136,12 @@ def validate_target(raw: str) -> str:
     host = _extract_host(s)
     if not host:
         raise TargetError(f"could not extract a host from target {s!r}")
+
+    # Uma porta impossível escrita no alvo é alvo malformado, não um detalhe a
+    # descartar: deixar ``parse_endpoint`` cair no padrão faria o operador pedir
+    # a 99999 e receber um relatório completo — cookies, cabeçalhos, métodos —
+    # sobre o serviço da 443, sem uma linha dizendo que a porta foi ignorada.
+    _reject_impossible_port(s)
     if host.startswith("-"):
         # e.g. a URL/authority whose host itself looks like a flag.
         raise TargetError(
@@ -148,6 +164,27 @@ def validate_target(raw: str) -> str:
     raise TargetError(
         f"target {s!r} is not a plausible host, IP address, CIDR or URL host"
     )
+
+
+def _reject_impossible_port(target: str) -> None:
+    """Levantar ``TargetError`` quando o alvo nomeia uma porta inviável."""
+    t = target.strip()
+    authority = urlparse(t).netloc if "://" in t else t.split("/", 1)[0]
+    authority = authority.rpartition("@")[2]
+
+    if authority.startswith("["):
+        _, sep, rest = authority.partition("]")
+        text = rest[1:] if sep and rest.startswith(":") else ""
+    elif authority.count(":") == 1:
+        _, _, text = authority.partition(":")
+    else:
+        text = ""
+
+    if text and coerce_port(text) is None:
+        raise TargetError(
+            f"target {t!r} names port {text!r}, which is not a port number "
+            f"between 1 and 65535"
+        )
 
 
 # --- host extraction -------------------------------------------------------
@@ -177,10 +214,12 @@ def _extract_host(s: str) -> str:
     except ValueError:
         pass
 
-    # host:port (a single colon, so not an IPv6 literal) — drop the port.
-    host = s.split(":", 1)[0] if s.count(":") == 1 else s
-    # Drop any path component left on a bare hostname ("example.com/admin").
-    host = host.split("/", 1)[0]
+    # host:port, com caminho e/ou userinfo possivelmente colados. A mesma
+    # extração que o ``parse_endpoint`` usa, para que validar e interpretar o
+    # alvo não possam discordar: ``user:senha@alvo`` virava o host "user" aqui
+    # e "alvo" lá, ou seja, a varredura era autorizada contra um host e
+    # executada contra outro.
+    host, _ = split_authority(s)
     return host
 
 
@@ -190,3 +229,111 @@ def _is_hostname(host: str) -> bool:
         return False
     labels = host.rstrip(".").split(".")
     return all(_LABEL.match(label) for label in labels)
+
+def coerce_port(value: object) -> int | None:
+    """Uma porta vinda de opção de operador, ou ``None`` se não for uma.
+
+    ``bool`` é recusado explicitamente, como em ``coerce_timeout``: a CLI
+    converte o literal ``true`` em ``True`` e ``int(True)`` é ``1``, então
+    ``--opt port=true`` varreria silenciosamente a porta 1 em vez de cair no
+    padrão — um erro de digitação virando um alvo errado sem aviso.
+    """
+    if isinstance(value, bool):
+        return None
+    try:
+        port = int(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return None
+    return port if 0 < port <= 65535 else None
+
+
+def looks_like_cidr(raw: str) -> bool:
+    """O alvo foi escrito em notação CIDR (``10.0.0.0/24``, ``10.0.0.1/32``)?
+
+    Pergunta diferente de :func:`is_network_target`, que quer saber se a faixa
+    tem mais de um endereço. Aqui o que importa é só que a barra pertence ao
+    prefixo e não é começo de caminho — ``10.0.0.1/32`` é um host, mas ``/32``
+    não é um endpoint.
+    """
+    text = (raw or "").strip()
+    if "/" not in text:
+        return False
+    try:
+        ipaddress.ip_network(text, strict=False)
+    except ValueError:
+        return False
+    return True
+
+
+def is_network_target(raw: str) -> bool:
+    """O alvo é uma rede (CIDR com mais de um endereço), e não um host?
+
+    Faz sentido para o ``recon.nmap``, que varre faixas. Não faz para quem
+    abre uma conexão HTTP: ``parse_endpoint`` devolveria o endereço de rede,
+    e o módulo auditaria *um* endereço enquanto rotula o achado com a faixa
+    inteira — um relatório sobre 254 hosts tirado de um.
+    """
+    try:
+        net = ipaddress.ip_network((raw or "").strip(), strict=False)
+    except ValueError:
+        return False
+    return net.num_addresses > 1
+
+
+def split_authority(target: str) -> tuple[str, int | None]:
+    """``(host, port)`` a partir da autoridade, sem esquema, userinfo nem caminho.
+
+    Uma função só para os três jeitos de escrever isso evita o que já aconteceu
+    duas vezes aqui: consertar um ramo e esquecer o outro.
+    """
+    t = target.strip()
+    authority = urlparse(t).netloc if "://" in t else t.split("/", 1)[0]
+    # ``user:senha@host`` — o ':' do userinfo não é o da porta. Sem tirá-lo,
+    # ``user:pass@alvo`` virava host "user", e o guarda de porta lia
+    # "pass@alvo" como número de porta e recusava um alvo que era válido.
+    authority = authority.rpartition("@")[2]
+
+    if authority.startswith("["):
+        # IPv6 literal: o endereço tem vários ':' por natureza, então só os
+        # colchetes dizem onde ele termina.
+        host, sep, rest = authority.partition("]")
+        host = host[1:]
+        port = coerce_port(rest[1:]) if sep and rest.startswith(":") else None
+    elif authority.count(":") == 1:
+        host, _, text = authority.partition(":")
+        port = coerce_port(text)
+    else:
+        host, port = authority, None
+
+    # Minúsculo, como ``validate_target`` já devolvia: sem isto,
+    # ``https://ALVO.com`` era normalizado para os módulos que recebem argv
+    # (nmap, nuclei) e chegava em caixa alta ao SNI, ao cabeçalho Host e ao
+    # rótulo do achado dos módulos HTTP — a mesma divergência entre validar e
+    # interpretar, estreitada para a caixa.
+    return host.lower(), port
+
+
+def parse_endpoint(target: str, options: dict) -> tuple[str, str, int]:
+    """Derive ``(scheme, host, port)`` from the target and options.
+
+    Estava duplicada, idêntica, em ``cookies``, ``http_methods`` e (com o
+    caminho a mais) ``load_test``, e o ``tls_headers`` tinha uma quarta leitura
+    própria que só olhava o host e assumia 443. Resultado: ``thursec run
+    https://alvo:8443`` fazia uns falarem com 8443 e o outro com 443 — serviço
+    diferente, ou nenhum — e os achados de um alvo saíam de lugares distintos.
+
+    Understands a full URL (scheme/host/port honored), a bare ``host``, a
+    ``host:port``, a forma IPv6 entre colchetes (``[::1]`` e ``[::1]:8443``) e
+    userinfo (``user:senha@host``). Defaults to https/443; ``http`` with no
+    port uses 80. ``options['port']`` overrides a port that is otherwise
+    unspecified.
+    """
+    t = target.strip()
+    scheme = (urlparse(t).scheme or "https").lower() if "://" in t else "https"
+    host, port = split_authority(t)
+
+    if port is None:
+        port = coerce_port(options.get("port"))
+    if port is None:
+        port = 443 if scheme == "https" else 80
+    return scheme, host, port

@@ -14,6 +14,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from rich.text import Text
+from textual.coordinate import Coordinate
 from textual import on, work
 from textual.app import App, ComposeResult
 from textual.containers import Horizontal, Vertical, VerticalScroll
@@ -34,6 +35,7 @@ from ..core.engine import Engine, Registry
 from ..core.finding import Finding, Severity
 from ..core.i18n import L, init_lang_from_env
 from ..core.module import Category, Intensity, Module
+from ..core.report import Report
 from ..core.scope import Scope, ScopeError
 
 # Honour THURSEC_LANG when the TUI is launched standalone (``thursec-tui``),
@@ -203,7 +205,11 @@ class ThurSecApp(App):
         self.registry = registry if registry is not None else Registry().discover()
         self.grouped = group_modules(self.registry.all())
         self.scope: Scope | None = None
-        self._findings: list[Finding] = []
+        # Um Report, e não uma lista solta: é ele que sabe colapsar um
+        # defeito do alvo que vários módulos encontram. Sem isso a TUI
+        # mostrava ALTO 3 para o certificado que a CLI conta como ALTO 1,
+        # no mesmo alvo e com os mesmos módulos.
+        self._report = Report()
 
     # --- composition -------------------------------------------------------
     def compose(self) -> ComposeResult:
@@ -352,7 +358,7 @@ class ThurSecApp(App):
             sel.deselect_all()
 
     def action_clear_results(self) -> None:
-        self._findings = []
+        self._report = Report()
         self.query_one("#findings", DataTable).clear()
         self._refresh_counts()
         self.query_one("#activity", RichLog).write(
@@ -427,19 +433,29 @@ class ThurSecApp(App):
             run_btn.label = L("Rodar ▸", "Run ▸")
 
     def _add_findings(self, findings: list[Finding]) -> None:
+        self._report.add(findings)
+        # A tabela é redesenhada em vez de só receber linhas: um achado novo
+        # pode absorver um já exibido, e aí a linha antiga precisa sair.
         table = self.query_one("#findings", DataTable)
-        for f in sorted(findings, key=lambda x: -int(x.severity)):
-            self._findings.append(f)
+        # Guardar onde a pessoa estava: numa varredura com vários módulos, cada
+        # um que termina redesenha a tabela, e sem isso o cursor dela voltava ao
+        # topo e a rolagem se perdia no meio da leitura.
+        previous = table.cursor_coordinate
+        table.clear()
+        for f in self._report.sorted():
             table.add_row(
                 severity_cell(f.severity),
                 Text(f.title, style="#e8ecf4"),
                 Text(f.module, style="#7d8597"),
                 Text(f.target, style="#4ea8de"),
             )
+        if previous is not None and table.row_count:
+            row = min(previous.row, table.row_count - 1)
+            table.cursor_coordinate = Coordinate(row, previous.column)
         self._refresh_counts()
 
     def _refresh_counts(self) -> None:
-        tally = SeverityTally.from_findings(self._findings)
+        tally = SeverityTally.from_findings(self._report.collapsed())
         self.query_one("#counts", Static).update(counts_line(tally))
 
     # --- button wiring -----------------------------------------------------

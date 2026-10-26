@@ -24,6 +24,7 @@ from typing import Any
 
 from .finding import Severity
 from .i18n import L, Lf
+from .report import collapse_changes, collapse_rows
 from .store import FindingStore
 
 # Severity palette — kept in sync with report.Report.to_html() so a severity
@@ -63,6 +64,21 @@ def _sev_label(name: str) -> str:
 
 class DashboardError(Exception):
     """Raised when a dashboard cannot be built (e.g. the store has no runs)."""
+
+
+def _also_seen(finding: dict[str, Any]) -> str:
+    """Os outros módulos que viram o mesmo defeito, se houver.
+
+    O colapso calculava essa lista e ninguém a mostrava, o que fazia a página
+    apresentar como observação de um módulo só o que três encontraram.
+    """
+    outros = (finding.get("metadata") or {}).get("also_seen_by") or []
+    if not outros:
+        return ""
+    return (
+        f" <span class='also'>{html.escape(Lf('+ {n} módulo(s)', '+ {n} module(s)', n=len(outros)))}"
+        f"<span class='tip'>{html.escape(', '.join(str(m) for m in outros))}</span></span>"
+    )
 
 
 def _counts_by_severity(findings: list[dict[str, Any]]) -> dict[str, int]:
@@ -275,7 +291,7 @@ def _render_table(findings: list[dict[str, Any]]) -> str:
             f"<tr><td><span class='sev' style='background:{SEVERITY_COLORS.get(sev, '#334155')}'>"
             f"{html.escape(_sev_label(sev))}</span></td>"
             f"<td>{html.escape(f['title'])}</td>"
-            f"<td><code>{html.escape(f['module'])}</code></td>"
+            f"<td><code>{html.escape(f['module'])}</code>{_also_seen(f)}</td>"
             f"<td><code>{html.escape(f['target'])}</code></td>"
             f"<td>{html.escape(f.get('recommendation', '') or '')}</td></tr>"
         )
@@ -336,6 +352,9 @@ _STYLE = """
  .sev{display:inline-block;padding:2px 8px;border-radius:4px;color:#fff;
       font-size:12px;font-weight:600}
  code{background:#1e293b;padding:1px 5px;border-radius:3px;font-size:13px}
+ .also{color:#94a3b8;font-size:12px;margin-left:6px;cursor:help}
+ .also .tip{display:none}
+ .also:hover .tip{display:inline;color:#cbd5e1;margin-left:4px}
  .empty{color:#64748b;font-style:italic}
  @media (max-width:640px){.wrap{padding:20px 12px 48px}h1{font-size:22px}}
 """
@@ -388,15 +407,30 @@ def render_dashboard(store: FindingStore, target: str | None = None) -> str:
         )
 
     latest = runs[0]
-    latest_findings = store.get_findings(latest["id"])
+    latest_findings = collapse_rows(store.get_findings(latest["id"]))
     counts = _counts_by_severity(latest_findings)
 
     # Trend: oldest → newest, capped for readability.
     trend_runs = list(reversed(runs[:15]))
     for r in trend_runs:
-        r["counts"] = _counts_by_severity(store.get_findings(r["id"]))
+        r["counts"] = _counts_by_severity(collapse_rows(store.get_findings(r["id"])))
 
     diff = store.diff_latest(resolved_target)
+    # O diff vem cru do store, como tudo o que é guardado lá. Sem colapsar
+    # aqui, a mesma página mostrava ALTO 1 nos blocos de cima e listava o
+    # mesmo certificado três vezes logo abaixo, como três achados novos.
+    #
+    for balde in ("new", "resolved"):
+        if isinstance(diff.get(balde), list):
+            diff[balde] = collapse_rows(diff[balde])
+    # As linhas de "changed_severity" são montadas à mão pelo store e não têm
+    # fingerprint nem metadata, então não passam pelo ``_collapse`` — todas
+    # cairiam na mesma chave vazia e o balde viraria uma entrada só. Mas elas
+    # têm identidade própria: alvo, título e as duas severidades. Sem agrupar
+    # por ela, a mesma página contava o certificado uma vez nos blocos e o
+    # listava três vezes na coluna de mudança de severidade.
+    if isinstance(diff.get("changed_severity"), list):
+        diff["changed_severity"] = collapse_changes(diff["changed_severity"])
 
     subtitle = Lf(
         "{t} · {n} execução(ões) · última execução nº{rid} em {ts} · "

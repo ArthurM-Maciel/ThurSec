@@ -34,9 +34,9 @@ def _ctx(target="https://example.com", **options):
 def _patch_get(monkeypatch, cookies, recorder=None):
     """Replace the HTTP layer with a fake returning raw Set-Cookie strings."""
 
-    def fake_get(self, host, port, scheme, timeout=10.0):
+    def fake_get(self, host, port, scheme, timeout=10.0, verify=True):
         if recorder is not None:
-            recorder.append((host, port, scheme))
+            recorder.append((host, port, scheme, verify))
         return list(cookies)
 
     monkeypatch.setattr(CookieAudit, "_get_set_cookies", fake_get)
@@ -138,7 +138,7 @@ async def test_no_cookies_reports_info(monkeypatch):
 
 
 async def test_connection_error_is_handled_finding(monkeypatch):
-    def boom(self, host, port, scheme, timeout=10.0):
+    def boom(self, host, port, scheme, timeout=10.0, verify=True, check_hostname=True):
         raise ConnectionRefusedError("connection refused")
 
     monkeypatch.setattr(CookieAudit, "_get_set_cookies", boom)
@@ -154,8 +154,8 @@ async def test_connection_error_is_handled_finding(monkeypatch):
 async def test_unsafe_target_refused_without_request(monkeypatch, bad):
     calls: list = []
 
-    def fake_get(self, host, port, scheme, timeout=10.0):  # pragma: no cover
-        calls.append((host, port, scheme))
+    def fake_get(self, host, port, scheme, timeout=10.0, verify=True):  # pragma: no cover
+        calls.append((host, port, scheme, verify))
         raise AssertionError("must not request for an unsafe target")
 
     monkeypatch.setattr(CookieAudit, "_get_set_cookies", fake_get)
@@ -171,4 +171,123 @@ async def test_scheme_and_port_derived_from_target(monkeypatch):
     seen: list = []
     _patch_get(monkeypatch, [_SECURE_COOKIE], recorder=seen)
     await CookieAudit().run(_ctx(target="http://example.com:8080"))
-    assert seen == [("example.com", 8080, "http")]
+    assert seen == [("example.com", 8080, "http", True)]
+
+
+# --- certificado recusado não é "porta errada" -----------------------------
+import ssl as _ssl
+
+
+def _verify_error(code, message):
+    error = _ssl.SSLCertVerificationError(
+        f"[SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed: {message}"
+    )
+    error.verify_code = code
+    error.verify_message = message
+    return error
+
+
+async def test_certificado_recusado_vira_achado_de_certificado(monkeypatch):
+    """Antes isso virava LOW 'verifique se o host oferece HTTP(S) nesta porta'."""
+    set_lang("pt")
+
+    def boom(self, host, port, scheme, timeout=10.0, verify=True, check_hostname=True):
+        raise _verify_error(62, "Hostname mismatch")
+
+    monkeypatch.setattr(CookieAudit, "_get_set_cookies", boom)
+    findings = await CookieAudit().run(_ctx())
+
+    assert len(findings) == 1
+    assert findings[0].severity is Severity.HIGH
+    assert "não cobre este domínio" in findings[0].title
+    assert findings[0].metadata["verify_code"] == 62
+
+
+async def test_com_opt_in_repete_preservando_a_cadeia(monkeypatch):
+    """A bandeira vale na repetição, e a repetição mantém o que dá para manter."""
+    set_lang("pt")
+    chamadas: list = []
+
+    def tls(self, host, port, scheme, timeout=10.0, verify=True, check_hostname=True):
+        chamadas.append((verify, check_hostname))
+        # Só o nome está errado: sem exigi-lo, a cadeia continua válida.
+        if check_hostname:
+            raise _verify_error(62, "Hostname mismatch")
+        return ["sid=abc; Path=/"]
+
+    monkeypatch.setattr(CookieAudit, "_get_set_cookies", tls)
+    findings = await CookieAudit().run(_ctx(insecure_tls=True))
+
+    # Verificado -> dispensa só o nome. Nunca precisou chegar a CERT_NONE.
+    assert chamadas == [(True, True), (True, False)]
+    assert findings[0].metadata["verify_code"] == 62
+    # Nada sai do canal não verificado sem a marca.
+    assert all(f.metadata.get("tls_verified") is False for f in findings[1:])
+
+
+async def test_so_cai_para_cert_none_quando_nem_a_cadeia_se_sustenta(monkeypatch):
+    """Cair direto para CERT_NONE aceitaria o certificado de qualquer um."""
+    set_lang("pt")
+    chamadas: list = []
+
+    def tls(self, host, port, scheme, timeout=10.0, verify=True, check_hostname=True):
+        chamadas.append((verify, check_hostname))
+        if verify:
+            raise _verify_error(18, "self signed certificate")
+        return ["sid=abc; Path=/"]
+
+    monkeypatch.setattr(CookieAudit, "_get_set_cookies", tls)
+    await CookieAudit().run(_ctx(insecure_tls=True))
+
+    assert chamadas == [(True, True), (True, False), (False, False)]
+
+
+async def test_a_bandeira_nao_rebaixa_uma_conexao_que_seria_verificada(monkeypatch):
+    """Com certificado bom, insecure_tls não deve desligar a verificação."""
+    chamadas: list = []
+
+    def ok(self, host, port, scheme, timeout=10.0, verify=True, check_hostname=True):
+        chamadas.append(verify)
+        return ["sid=abc; Path=/; Secure; HttpOnly; SameSite=Lax"]
+
+    monkeypatch.setattr(CookieAudit, "_get_set_cookies", ok)
+    findings = await CookieAudit().run(_ctx(insecure_tls=True))
+
+    assert chamadas == [True]
+    assert all("tls_verified" not in f.metadata for f in findings)
+
+
+async def test_quando_a_repeticao_falha_o_achado_nao_diz_que_seguiu(monkeypatch):
+    """Nenhum teste cobria esse caminho, e era onde a descrição mentia."""
+    set_lang("pt")
+
+    def tls(self, host, port, scheme, timeout=10.0, verify=True, check_hostname=True):
+        if verify:
+            raise _verify_error(18, "self signed certificate")
+        raise ConnectionResetError("connection reset by peer")
+
+    monkeypatch.setattr(CookieAudit, "_get_set_cookies", tls)
+    findings = await CookieAudit().run(_ctx(insecure_tls=True))
+
+    assert len(findings) == 2
+    # A descrição fala da configuração da execução, nunca do que este módulo
+    # conseguiu: afirmar aqui que a auditoria seguiu seria falso, e separar o
+    # desfecho na chave de dedup traria de volta a contagem dupla.
+    assert "seguiu" not in findings[0].description
+    assert "connection reset" in findings[1].evidence
+
+
+async def test_faixa_de_rede_e_recusada_sem_abrir_socket(monkeypatch):
+    """Auditar o endereço de rede e rotular com o /24 é relatar 254 hosts por um."""
+    chamadas: list = []
+
+    def nunca(self, host, port, scheme, timeout=10.0, verify=True, check_hostname=True):
+        chamadas.append(host)  # pragma: no cover
+        raise AssertionError("não pode conectar a uma faixa")
+
+    monkeypatch.setattr(CookieAudit, "_get_set_cookies", nunca)
+    findings = await CookieAudit().run(_ctx(target="10.0.0.0/24"))
+
+    assert chamadas == []
+    assert len(findings) == 1
+    assert "network range" in findings[0].title

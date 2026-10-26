@@ -33,9 +33,9 @@ def _ctx(target="https://example.com", **options):
 def _patch_options(monkeypatch, status, headers, recorder=None):
     """Replace the HTTP layer with a fake returning (status, headers)."""
 
-    def fake_options(self, host, port, scheme, timeout=10.0):
+    def fake_options(self, host, port, scheme, timeout=10.0, verify=True):
         if recorder is not None:
-            recorder.append((host, port, scheme))
+            recorder.append((host, port, scheme, verify))
         return status, headers
 
     monkeypatch.setattr(HttpMethods, "_options", fake_options)
@@ -118,7 +118,7 @@ async def test_no_allow_header_reports_info(monkeypatch):
 
 
 async def test_connection_error_is_handled_finding(monkeypatch):
-    def boom(self, host, port, scheme, timeout=10.0):
+    def boom(self, host, port, scheme, timeout=10.0, verify=True, check_hostname=True):
         raise ConnectionRefusedError("connection refused")
 
     monkeypatch.setattr(HttpMethods, "_options", boom)
@@ -134,8 +134,8 @@ async def test_connection_error_is_handled_finding(monkeypatch):
 async def test_unsafe_target_refused_without_request(monkeypatch, bad):
     calls: list = []
 
-    def fake_options(self, host, port, scheme, timeout=10.0):  # pragma: no cover
-        calls.append((host, port, scheme))
+    def fake_options(self, host, port, scheme, timeout=10.0, verify=True):  # pragma: no cover
+        calls.append((host, port, scheme, verify))
         raise AssertionError("must not request for an unsafe target")
 
     monkeypatch.setattr(HttpMethods, "_options", fake_options)
@@ -151,4 +151,67 @@ async def test_scheme_and_port_derived_from_target(monkeypatch):
     seen: list = []
     _patch_options(monkeypatch, 200, _BENIGN_HEADERS, recorder=seen)
     await HttpMethods().run(_ctx(target="http://example.com:8080"))
-    assert seen == [("example.com", 8080, "http")]
+    assert seen == [("example.com", 8080, "http", True)]
+
+
+# --- certificado recusado não é "porta errada" -----------------------------
+import ssl as _ssl
+
+
+def _verify_error(code, message):
+    error = _ssl.SSLCertVerificationError(
+        f"[SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed: {message}"
+    )
+    error.verify_code = code
+    error.verify_message = message
+    return error
+
+
+async def test_certificado_recusado_vira_achado_de_certificado(monkeypatch):
+    """Antes isso virava LOW 'verifique se o host serve HTTP(S) nesta porta'."""
+    set_lang("pt")
+
+    def boom(self, host, port, scheme, timeout=10.0, verify=True, check_hostname=True):
+        raise _verify_error(10, "certificate has expired")
+
+    monkeypatch.setattr(HttpMethods, "_options", boom)
+    findings = await HttpMethods().run(_ctx())
+
+    assert len(findings) == 1
+    assert findings[0].severity is Severity.CRITICAL
+    assert "expirado" in findings[0].title
+
+
+async def test_quando_a_repeticao_falha_o_achado_nao_diz_que_seguiu(monkeypatch):
+    """Nenhum teste cobria esse caminho, e era onde a descrição mentia."""
+    set_lang("pt")
+
+    def tls(self, host, port, scheme, timeout=10.0, verify=True, check_hostname=True):
+        if verify:
+            raise _verify_error(18, "self signed certificate")
+        raise ConnectionResetError("connection reset by peer")
+
+    monkeypatch.setattr(HttpMethods, "_options", tls)
+    findings = await HttpMethods().run(_ctx(insecure_tls=True))
+
+    assert len(findings) == 2
+    # A descrição fala da configuração da execução, nunca do que este módulo
+    # conseguiu: afirmar aqui que a auditoria seguiu seria falso, e separar o
+    # desfecho na chave de dedup traria de volta a contagem dupla.
+    assert "seguiu" not in findings[0].description
+    assert "connection reset" in findings[1].evidence
+
+
+async def test_faixa_de_rede_e_recusada_sem_abrir_socket(monkeypatch):
+    chamadas: list = []
+
+    def nunca(self, host, port, scheme, timeout=10.0, verify=True, check_hostname=True):
+        chamadas.append(host)  # pragma: no cover
+        raise AssertionError("não pode conectar a uma faixa")
+
+    monkeypatch.setattr(HttpMethods, "_options", nunca)
+    findings = await HttpMethods().run(_ctx(target="10.0.0.0/24"))
+
+    assert chamadas == []
+    assert len(findings) == 1
+    assert "network range" in findings[0].title

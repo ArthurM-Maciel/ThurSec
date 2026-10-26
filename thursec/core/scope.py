@@ -28,6 +28,7 @@ from pathlib import Path
 from typing import Iterable
 
 from .i18n import L, Lf
+from .target import split_authority
 
 
 class ScopeError(Exception):
@@ -132,16 +133,28 @@ class Scope:
 
 
 def _host_of(target: str) -> str:
-    """Extract the host from a bare host, host:port, or URL."""
-    t = target.strip()
-    if "://" in t:
-        from urllib.parse import urlparse
+    """Extract the host from a bare host, host:port, or URL.
 
-        t = urlparse(t).hostname or t
-    # strip a trailing :port only when it's not part of an IPv6 literal
-    if t.count(":") == 1:
-        t = t.split(":", 1)[0]
-    return t
+    Usa a mesma extração que ``core.target``, e não uma cópia: o gate de escopo
+    autoriza um host e os módulos conectam em outro se as duas leituras
+    divergirem. Foi o que aconteceu com ``admin:senha@alvo`` — o escopo via o
+    host ``admin`` e os módulos falavam com ``alvo``.
+    """
+    t = target.strip()
+    # Uma rede continua sendo comparada como rede (``_match`` resolve
+    # contenção de faixa em faixa): extrair "host" dela descartaria o prefixo
+    # e alargaria a autorização.
+    try:
+        rede = ipaddress.ip_network(t, strict=False)
+    except ValueError:
+        rede = None
+    if rede is not None:
+        # Normalizado, como fazem ``validate_target`` e ``parse_endpoint``:
+        # um IPv6 em caixa alta não pode sair daqui diferente do que os
+        # módulos vão usar.
+        return str(rede) if "/" in t else str(rede.network_address)
+    host, _ = split_authority(t)
+    return host
 
 
 def _match(host: str, entry: str) -> bool:
@@ -149,12 +162,23 @@ def _match(host: str, entry: str) -> bool:
     # CIDR or single IP entry
     try:
         net = ipaddress.ip_network(entry, strict=False)
+    except ValueError:
+        net = None
+    if net is not None:
         try:
             return ipaddress.ip_address(host) in net
         except ValueError:
-            return False  # host isn't an IP, entry is a network => no match
-    except ValueError:
-        pass
+            pass
+        # Alvo escrito como faixa: só autorizado se estiver inteiro dentro da
+        # faixa autorizada. Comparar como endereço levantava ValueError e
+        # devolvia False, então ``--scope`` com ``10.0.0.0/24`` recusava
+        # ``thursec run 10.0.0.0/24`` — o alvo que o arquivo autoriza
+        # literalmente, no módulo (recon.nmap) para o qual faixas existem.
+        try:
+            alvo = ipaddress.ip_network(host, strict=False)
+        except ValueError:
+            return False  # host não é IP nem faixa, entrada é rede => sem match
+        return alvo.version == net.version and alvo.subnet_of(net)
     # hostname glob (case-insensitive). Unlike fnmatch, '*' matches a single
     # label only (it does not cross '.'), so '*.lab.example' authorizes
     # 'a.lab.example' but NOT 'deep.sub.lab.example' — a deliberately tight

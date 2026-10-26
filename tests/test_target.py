@@ -128,3 +128,81 @@ def test_alvo_de_rede_com_barra_nao_e_caminho(alvo):
     assert looks_like_local_path(alvo) is False
     # E segue sendo um alvo que o validador aceita.
     validate_target(alvo)
+
+
+# --- parse_endpoint: a leitura de alvo compartilhada pelos 4 módulos de rede
+import pytest as _pytest
+
+from thursec.core.target import parse_endpoint
+
+
+@_pytest.mark.parametrize(
+    "target, esperado",
+    [
+        ("example.com", ("https", "example.com", 443)),
+        ("example.com:8443", ("https", "example.com", 8443)),
+        ("https://example.com", ("https", "example.com", 443)),
+        ("http://example.com", ("http", "example.com", 80)),
+        ("http://example.com:8080/x", ("http", "example.com", 8080)),
+        # O caminho colado não pode comer a porta nem virar parte do host.
+        ("example.com:8443/", ("https", "example.com", 8443)),
+        ("example.com:8443/x?q=1", ("https", "example.com", 8443)),
+        ("example.com/admin", ("https", "example.com", 443)),
+        # IPv6 tem vários ':' por natureza; só os colchetes delimitam.
+        ("[::1]", ("https", "::1", 443)),
+        ("[::1]:8443", ("https", "::1", 8443)),
+        ("https://[::1]:9000", ("https", "::1", 9000)),
+    ],
+)
+def test_parse_endpoint_le_as_formas_de_alvo(target, esperado):
+    assert parse_endpoint(target, {}) == esperado
+
+
+@_pytest.mark.parametrize("ruim", ["99999", "0", "-1", "oito", "", True])
+def test_porta_impossivel_cai_no_padrao_em_vez_de_explodir(ruim):
+    """Os 4 módulos passam por aqui: uma exceção derrubaria todos de uma vez."""
+    assert parse_endpoint("example.com", {"port": ruim}) == ("https", "example.com", 443)
+
+
+def test_porta_impossivel_na_url_nao_levanta():
+    """urlparse(...).port *levanta* fora de 0-65535, virando ERRO de módulo."""
+    assert parse_endpoint("https://example.com:99999/", {}) == (
+        "https",
+        "example.com",
+        443,
+    )
+
+
+def test_opt_port_so_vale_quando_o_alvo_nao_traz_porta():
+    assert parse_endpoint("example.com", {"port": 8080})[2] == 8080
+    assert parse_endpoint("example.com:8443", {"port": 8080})[2] == 8443
+
+
+# --- porta impossível no alvo é alvo malformado, não detalhe a descartar ---
+@_pytest.mark.parametrize(
+    "ruim",
+    ["alvo:99999", "https://alvo:99999/", "[::1]:99999", "alvo:0", "alvo:-1"],
+)
+def test_porta_impossivel_no_alvo_e_recusada(ruim):
+    """Cair no padrão daria um relatório completo sobre o serviço errado."""
+    with _pytest.raises(TargetError):
+        validate_target(ruim)
+
+
+@_pytest.mark.parametrize(
+    "bom", ["alvo:8443", "https://alvo:8443/x", "[::1]:8443", "alvo", "[::1]"]
+)
+def test_porta_valida_no_alvo_passa(bom):
+    assert validate_target(bom)
+
+
+@_pytest.mark.parametrize(
+    "target, esperado",
+    [
+        # O caminho colado não pode comer a porta em nenhum dos ramos.
+        ("[::1]:8443/admin", ("https", "::1", 8443)),
+        ("alvo:8443/admin", ("https", "alvo", 8443)),
+    ],
+)
+def test_caminho_colado_nao_come_a_porta(target, esperado):
+    assert parse_endpoint(target, {}) == esperado

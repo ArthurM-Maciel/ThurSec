@@ -43,7 +43,7 @@ import urllib.request
 from dataclasses import dataclass
 
 from ... import __version__
-from ...core.context import RunContext
+from ...core.context import RunContext, coerce_bool
 from ...core.finding import Finding, Severity
 from ...core.i18n import L, Lf
 from ...core.module import Category, Intensity, Module
@@ -97,7 +97,7 @@ class SupabaseAudit(Module):
         service_key = ctx.options.get("service_role_key") or os.environ.get(
             "SUPABASE_SERVICE_ROLE_KEY"
         )
-        key_in_client = bool(ctx.options.get("service_key_in_client", False))
+        key_in_client = coerce_bool(ctx.options.get("service_key_in_client"), False)
 
         if not base:
             return [

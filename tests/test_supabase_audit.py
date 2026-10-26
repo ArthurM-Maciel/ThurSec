@@ -9,7 +9,7 @@ import json
 
 import pytest
 
-from thursec.core.context import RunContext
+from thursec.core.context import RunContext, coerce_bool
 from thursec.core.finding import Severity
 from thursec.core.i18n import get_lang, set_lang
 from thursec.modules.config_audit.supabase_audit import (
@@ -252,3 +252,45 @@ async def test_no_key_appears_raw_in_any_finding(monkeypatch):
     )
     assert findings
     _no_key_leak(findings, _ANON_KEY, _SERVICE_KEY)
+
+
+# --- a bandeira não pode fabricar um CRITICAL ------------------------------
+import pytest as _pytest
+
+from thursec.modules.config_audit.supabase_audit import SupabaseAudit as _Audit
+
+# Um JWT de papel service_role, com assinatura de brinquedo: nunca sai de aqui.
+_FAKE_SERVICE_KEY = (
+    "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9."
+    "eyJyb2xlIjoic2VydmljZV9yb2xlIiwiaWF0IjoxfQ."
+    "YXNzaW5hdHVyYS1kZS1icmlucXVlZG8"
+)
+
+
+def _service_key_findings(value):
+    return _Audit()._check_service_key(
+        RunContext(target="https://abc.supabase.co"),
+        _FAKE_SERVICE_KEY,
+        coerce_bool(value, False),
+    )
+
+
+def test_a_bandeira_ligada_realmente_produz_o_critical():
+    """Sem isto, o teste abaixo passaria mesmo se o achado nunca existisse."""
+    titles = [f.title.lower() for f in _service_key_findings(True)]
+    assert any("client" in t for t in titles)
+    assert _service_key_findings(True)[0].severity is Severity.CRITICAL
+
+
+@_pytest.mark.parametrize("falsey", ["false", "False", "no", "0", ""])
+def test_service_key_in_client_falso_como_texto_nao_inventa_achado(falsey):
+    """`bool("false")` é verdadeiro — e aqui isso *cria* um CRITICAL do nada."""
+    findings = _service_key_findings(falsey)
+
+    assert all(f.severity is not Severity.CRITICAL for f in findings)
+    assert not any("client-side" in f.title.lower() for f in findings)
+
+
+@_pytest.mark.parametrize("typo", ["flase", "talvez"])
+def test_erro_de_digitacao_nao_inventa_achado(typo):
+    assert all(f.severity is not Severity.CRITICAL for f in _service_key_findings(typo))

@@ -8,6 +8,7 @@ Two layers, both fast and deterministic:
 from __future__ import annotations
 
 import pytest
+from textual.coordinate import Coordinate
 
 from thursec.core.engine import Registry
 from thursec.core.finding import Finding, Severity
@@ -179,3 +180,83 @@ async def test_run_without_target_notifies_and_adds_no_rows() -> None:
 
         table = app.query_one("#findings", DataTable)
         assert table.row_count == 0
+
+
+@pytest.mark.asyncio
+async def test_tui_colapsa_como_a_cli() -> None:
+    """A TUI mostrava ALTO 3 onde a CLI conta ALTO 1, no mesmo alvo."""
+    from textual.widgets import DataTable
+
+    from thursec.core.finding import Finding
+
+    def cert(module):
+        return Finding(
+            module=module,
+            target="https://alvo",
+            title="Certificado TLS não cobre este domínio",
+            severity=Severity.HIGH,
+            metadata={"dedup_key": "cert-verify:alvo:443:62:parou"},
+        )
+
+    app = ThurSecApp()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        # Chegam em execuções separadas, como os módulos chegam de verdade.
+        app._add_findings([cert("config_audit.tls_headers")])
+        app._add_findings([cert("config_audit.cookies")])
+        app._add_findings([cert("vuln.http_methods")])
+        await pilot.pause()
+
+        assert app.query_one("#findings", DataTable).row_count == 1
+        tally = SeverityTally.from_findings(app._report.collapsed())
+        assert tally.counts[Severity.HIGH] == 1
+        # O store ainda recebe os três, como na CLI.
+        assert len(app._report.findings) == 3
+
+
+@pytest.mark.asyncio
+async def test_limpar_resultados_zera_o_relatorio() -> None:
+    from textual.widgets import DataTable
+
+    from thursec.core.finding import Finding
+
+    app = ThurSecApp()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app._add_findings(
+            [Finding(module="m", target="t", title="x", severity=Severity.LOW)]
+        )
+        await pilot.pause()
+        assert app.query_one("#findings", DataTable).row_count == 1
+
+        app.action_clear_results()
+        await pilot.pause()
+        assert app.query_one("#findings", DataTable).row_count == 0
+        assert app._report.findings == []
+
+
+@pytest.mark.asyncio
+async def test_redesenho_preserva_a_linha_selecionada() -> None:
+    """Cada módulo que termina redesenha a tabela; o cursor não pode saltar."""
+    from textual.widgets import DataTable
+
+    from thursec.core.finding import Finding
+
+    def f(titulo, sev=Severity.MEDIUM):
+        return Finding(module="m", target="t", title=titulo, severity=sev)
+
+    app = ThurSecApp()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app._add_findings([f(f"achado {i}") for i in range(5)])
+        await pilot.pause()
+
+        table = app.query_one("#findings", DataTable)
+        table.cursor_coordinate = Coordinate(3, 0)
+        await pilot.pause()
+
+        app._add_findings([f("achado novo")])
+        await pilot.pause()
+
+        assert table.row_count == 6
+        assert table.cursor_coordinate.row == 3

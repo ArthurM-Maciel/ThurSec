@@ -39,7 +39,13 @@ from ...core.context import RunContext, coerce_timeout
 from ...core.finding import Finding, Severity
 from ...core.i18n import L, Lf
 from ...core.module import Category, Intensity, Module
-from ...core.target import TargetError, validate_target
+from ...core.target import (
+    TargetError,
+    is_network_target,
+    looks_like_cidr,
+    parse_endpoint,
+    validate_target,
+)
 
 _USER_AGENT = f"ThurSec/{__version__}"
 
@@ -115,6 +121,31 @@ class LoadTest(Module):
                     recommendation=L(
                         "Forneça um hostname, IP ou URL simples que você possua.",
                         "Provide a plain hostname, IP, or URL you own.",
+                    ),
+                )
+            ]
+
+        if is_network_target(ctx.target):
+            # Os outros módulos de rede recusam uma faixa; aqui importa mais:
+            # este é o INTRUSIVE. Sem a guarda, a carga ia toda para o endereço
+            # de rede e o achado saía rotulado com o /24 inteiro — número de
+            # latência e taxa de erro de 254 hosts tirados de um.
+            return [
+                ctx.finding(
+                    self.id,
+                    L(
+                        "Alvo é uma faixa de rede, não um host",
+                        "Target is a network range, not a host",
+                    ),
+                    Severity.INFO,
+                    description=Lf(
+                        "{t} é uma faixa; o teste de carga precisa de um host.",
+                        "{t} is a range; the load test needs a single host.",
+                        t=ctx.target,
+                    ),
+                    recommendation=L(
+                        "Aponte o teste para um host específico da faixa.",
+                        "Point the test at one specific host in the range.",
                     ),
                 )
             ]
@@ -586,40 +617,28 @@ def _percentiles(latencies: list[float]) -> tuple[float, float, float]:
 def _parse_target(target: str, options: dict) -> tuple[str, str, int, str]:
     """Derive ``(scheme, host, port, path)`` from the target and options.
 
-    Understands a full URL (scheme/host/port/path honored), a bare ``host`` and
-    a ``host:port``. Defaults to https/443; ``http`` with no port uses 80.
-    ``options['port']`` overrides a port that is otherwise unspecified;
-    ``options['path']`` overrides the request path.
+    Esta era a quarta cópia da mesma leitura de alvo no projeto, e a divergência
+    entre elas já custou um módulo auditando outra porta. Só o caminho é
+    exclusivo daqui — ``options['path']`` sobrepõe o da URL.
     """
+    scheme, host, port = parse_endpoint(target, options)
+
+    # O caminho vem do alvo com ou sem esquema: ``parse_endpoint`` descarta o
+    # que vem depois da autoridade, e recuperá-lo só no ramo da URL faria
+    # ``alvo/admin`` virar uma carga contra ``/`` enquanto o relatório diz que
+    # o alvo era ``/admin`` — num módulo que martela de verdade, medir outro
+    # endpoint em silêncio é o pior desfecho possível.
     t = target.strip()
-    scheme = "https"
-    port: int | None = None
-    path = "/"
-
     if "://" in t:
-        parsed = urlparse(t)
-        scheme = (parsed.scheme or "https").lower()
-        host = parsed.hostname or ""
-        port = parsed.port
-        if parsed.path:
-            path = parsed.path
-    elif t.count(":") == 1:
-        host, _, p = t.partition(":")
-        try:
-            port = int(p)
-        except ValueError:
-            port = None
+        path = urlparse(t).path or "/"
+    elif looks_like_cidr(t):
+        # A barra de um CIDR não é caminho: sem isto, ``10.0.0.0/24`` virava
+        # uma carga contra ``/24``, e o relatório trazia latência e taxa de
+        # erro de um endpoint que não existe.
+        path = "/"
     else:
-        host = t
-
-    if "port" in options and port is None:
-        try:
-            port = int(options["port"])
-        except (TypeError, ValueError):
-            port = None
+        _, sep, rest = t.partition("/")
+        path = f"/{rest}" if sep else "/"
     if options.get("path"):
         path = str(options["path"])
-
-    if port is None:
-        port = 443 if scheme == "https" else 80
     return scheme, host, port, path

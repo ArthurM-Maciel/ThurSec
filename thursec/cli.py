@@ -19,8 +19,9 @@ from .core.engine import Engine, Registry
 from .core.i18n import L, Lf, SUPPORTED_LANGS, init_lang_from_env, set_lang
 from .core.module import Category, Intensity, Module
 from .core.dashboard import render_dashboard
-from .core.report import Report
+from .core.report import Report, collapse_changes, collapse_rows
 from .core.scope import Scope, ScopeError
+from .core.target import coerce_port
 from .core.store import FindingStore, StoreError
 
 _BANNER_ART = r"""
@@ -318,6 +319,27 @@ def _parse_opts(items: list[str]) -> dict[str, Any]:
     return out
 
 
+def _reject_impossible_opt_port(options: dict[str, Any]) -> None:
+    """Fail on ``--opt port=`` that is not a port number.
+
+    Same reasoning as a bad port written into the target: coercing it to the
+    default would hand the operator a full report about whatever answers on 443
+    while they asked for another port, with nothing saying theirs was dropped.
+    Covers the module-scoped form too (``config_audit.cookies.port=``).
+    """
+    for key, value in options.items():
+        if key != "port" and not key.endswith(".port"):
+            continue
+        if coerce_port(value) is None:
+            raise ValueError(
+                Lf(
+                    "--opt {k}={v!r} não é um número de porta entre 1 e 65535.",
+                    "--opt {k}={v!r} is not a port number between 1 and 65535.",
+                    k=key, v=value,
+                )
+            )
+
+
 def _reject_unknown_opt_scopes(options: dict[str, Any], modules: list[Module]) -> None:
     """Fail on a module-scoped ``--opt`` key not addressed to a selected module.
 
@@ -415,6 +437,7 @@ async def _cmd_run(registry: Registry, args: argparse.Namespace) -> int:
     try:
         options.update(_parse_opts(args.opt))
         _reject_unknown_opt_scopes(options, modules)
+        _reject_impossible_opt_port(options)
     except ValueError as e:
         print(Lf("erro: {e}", "error: {e}", e=e), file=sys.stderr)
         return 2
@@ -499,9 +522,12 @@ def _cmd_diff(args: argparse.Namespace) -> int:
         t=args.target, ra=result["run_a"], rb=result["run_b"],
     ))
 
-    new = result["new"]
-    resolved = result["resolved"]
-    changed = result["changed_severity"]
+    # Mesmo agrupamento do painel e do resumo da execução: sem isto o
+    # `thursec diff` imprimia "Novos (3)" para o certificado que o painel
+    # mostra uma vez e que o `thursec run` contou como ALTO 1.
+    new = collapse_rows(result["new"])
+    resolved = collapse_rows(result["resolved"])
+    changed = collapse_changes(result["changed_severity"])
     none_txt = L("    (nenhum)", "    (none)")
 
     print(Lf("  Novos ({n}):", "  New ({n}):", n=len(new)))

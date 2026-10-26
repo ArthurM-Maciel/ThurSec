@@ -138,6 +138,29 @@ can't truncate `vuln.nuclei`, whose default is 600s:
 thursec run alvo -c vuln --scope scope.yaml --opt vuln.cve_lookup.timeout=60
 ```
 
+Every network module reads the target the same way, so a port written into it
+applies to all of them:
+
+```bash
+thursec run https://alvo:9443 --scope scope.yaml -c config_audit
+```
+
+The scheme decides what that port means. `https://alvo:9443` and a bare
+`alvo:9443` name a TLS service; `http://alvo:8080` names a cleartext one, and
+the TLS audit reports that there is nothing to audit rather than guessing a
+different port.
+
+When a host's certificate is the defect — it names a different domain, has
+expired, or is served without its intermediates — the audit reports that as a
+finding and stops there, because the server has not proved it is who it claims
+to be. To go on anyway and audit the response headers over that untrusted
+channel, opt in explicitly; every finding that comes back is marked
+`tls_verified: false`:
+
+```bash
+thursec run https://alvo --scope scope.yaml --opt insecure_tls=true
+```
+
 For a guided, fully self-contained walkthrough (safe, localhost-only), see
 [`DEMO.md`](DEMO.md).
 

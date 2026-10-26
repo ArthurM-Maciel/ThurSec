@@ -176,3 +176,34 @@ def test_opt_scoped_to_a_module_not_in_this_run_is_rejected():
 
     with pytest.raises(ValueError, match="vuln.cve_lookup"):
         cli._reject_unknown_opt_scopes({"vuln.cve_lookup.timeout": 60}, mods)
+
+
+# --- --opt port= inválido é erro de uso, não um padrão silencioso ----------
+import pytest as _pytest
+
+from thursec.cli import _reject_impossible_opt_port
+
+
+@_pytest.mark.parametrize(
+    "valor", ["99999", "0", "-1", "oito", "", True, None]
+)
+def test_opt_port_invalido_e_erro_de_uso(valor):
+    """Coagir ao padrão daria um relatório sobre o serviço da 443 sem avisar."""
+    with _pytest.raises(ValueError) as exc:
+        _reject_impossible_opt_port({"port": valor})
+    assert "port" in str(exc.value)
+
+
+@_pytest.mark.parametrize("chave", ["port", "config_audit.cookies.port"])
+def test_a_validacao_alcanca_a_forma_com_escopo(chave):
+    with _pytest.raises(ValueError):
+        _reject_impossible_opt_port({chave: "99999"})
+
+
+@_pytest.mark.parametrize("valor", ["8080", 8080, "1", "65535"])
+def test_opt_port_valido_passa(valor):
+    _reject_impossible_opt_port({"port": valor})
+
+
+def test_outras_chaves_nao_sao_afetadas():
+    _reject_impossible_opt_port({"timeout": "99999", "passport": "x"})

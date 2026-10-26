@@ -35,6 +35,38 @@ def coerce_timeout(value: object, default: float) -> float:
     return seconds if seconds > 0 else default
 
 
+_TRUTHY_TEXT = frozenset({"1", "true", "yes", "on", "sim", "y", "s"})
+_FALSEY_TEXT = frozenset({"", "0", "false", "no", "off", "nao", "não", "n"})
+
+
+def coerce_bool(value: object, default: bool = False) -> bool:
+    """Interpretar uma opção de operador como bandeira liga/desliga.
+
+    ``bool(value)`` não serve: a CLI converte ``false`` para ``False``, mas um
+    módulo também é chamado de dentro do Python (testes, a skill do Claude), e
+    ali a string ``"false"`` chega intacta — e toda string não vazia é
+    verdadeira. Numa bandeira que *desliga* uma proteção, isso inverte a
+    intenção de quem escreveu a opção, que é o pior sentido do erro.
+
+    Pelo mesmo motivo só liga com uma palavra reconhecida: um ``flase`` digitado
+    errado cai no padrão, como faz ``coerce_timeout``. Tratar o desconhecido
+    como verdadeiro faria um erro de digitação *ligar* justamente as bandeiras
+    que desarmam proteção — ``allow_intrusive`` e ``insecure_tls``.
+    """
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        text = value.strip().lower()
+        if text in _TRUTHY_TEXT:
+            return True
+        if text in _FALSEY_TEXT:
+            return False
+        return default
+    return bool(value)
+
+
 def scoped_options(options: dict[str, Any], module_id: str) -> dict[str, Any]:
     """Resolve the flat ``--opt`` key space into one module's view of it.
 

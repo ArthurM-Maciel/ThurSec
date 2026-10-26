@@ -212,3 +212,22 @@ def test_module_is_intrusive_and_scope_gated():
     # Hard caps exist and are sane.
     assert lt._HARD_MAX_RPS == 200
     assert lt._HARD_MAX_DURATION == 60
+
+
+# --- faixa de rede não é alvo de carga -------------------------------------
+async def test_faixa_de_rede_e_recusada_sem_gerar_carga(monkeypatch):
+    """É o módulo INTRUSIVE: errar o alvo aqui custa tráfego real."""
+    chamadas: list = []
+
+    def nunca(self, host, port, scheme, path, timeout=10.0):  # pragma: no cover
+        chamadas.append(host)
+        raise AssertionError("não pode gerar carga contra uma faixa")
+
+    monkeypatch.setattr(LoadTest, "_do_request", nunca)
+    findings = await LoadTest().run(
+        RunContext(target="10.0.0.0/24", options={"allow_intrusive": True})
+    )
+
+    assert chamadas == []
+    assert len(findings) == 1
+    assert "network range" in findings[0].title
