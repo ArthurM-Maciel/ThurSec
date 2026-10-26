@@ -1,9 +1,14 @@
 """Subdomain discovery via Certificate Transparency logs — pure stdlib.
 
 Public CT logs record every certificate a CA issues, including the hostnames in
-them. Querying crt.sh for a domain therefore surfaces subdomains an organisation
+them. Querying them for a domain therefore surfaces subdomains an organisation
 may not realise are publicly discoverable — all without sending a single packet
 to the target itself, which is why this module is PASSIVE and needs no scope.
+
+Two sources are queried in order. crt.sh is the richer index but returns an
+intermittent 502 even while healthy (measured at roughly 2 requests in 3), so a
+failure there falls through to SSLMate's CertSpotter rather than ending the
+lookup. Only when both are unreachable do we report that we could not look.
 """
 
 from __future__ import annotations
@@ -21,6 +26,12 @@ from ...core.i18n import L, Lf
 from ...core.module import Category, Intensity, Module
 
 _CRT_SH_URL = "https://crt.sh/?q=%25.{domain}&output=json"
+# Fonte alternativa quando o crt.sh falha. Também lê logs públicos de CT,
+# também sem autenticação, mas com limite de requisições por hora.
+_CERTSPOTTER_URL = (
+    "https://api.certspotter.com/v1/issuances"
+    "?domain={domain}&include_subdomains=true&expand=dns_names"
+)
 _USER_AGENT = f"ThurSec/{__version__}"
 # crt.sh agrega todos os logs públicos de CT e costuma levar dezenas de
 # segundos em domínios grandes; um teto curto demais vira timeout rotineiro.
@@ -34,6 +45,21 @@ _RETRY_DELAY = 2.0
 _MAX_RETRY_DELAY = 30.0
 # Falhas que melhoram repetindo. gaierror (NXDOMAIN) e erro de TLS ficam de fora.
 _TRANSIENT_ERRORS = (TimeoutError, ConnectionError)
+
+# (nome exibido, método, fração do orçamento total). O método é resolvido por
+# getattr na hora da chamada, para que os testes possam substituí-lo. A primeira
+# fonte recebe só parte do orçamento: se ela travar em vez de falhar rápido,
+# ainda sobra tempo para a segunda — que é justamente quando ela é necessária.
+_SOURCES = (
+    ("crt.sh", "fetch", 0.6),
+    ("CertSpotter", "fetch_fallback", 1.0),
+)
+_SOURCE_URLS = {
+    "crt.sh": "https://crt.sh/",
+    "CertSpotter": "https://sslmate.com/ct_search_api/",
+}
+# Abaixo disso não vale tentar: o pedido não tem chance de completar.
+_MIN_SOURCE_BUDGET = 1.0
 # Above this many subdomains we nudge the operator about attack surface.
 _LARGE_SURFACE = 50
 # How many names to show inline in the finding's evidence.
@@ -56,8 +82,9 @@ class CtSubdomains(Module):
     def description(self) -> str:
         return L(
             "Enumera subdomínios a partir de logs públicos de Certificate "
-            "Transparency (crt.sh).",
-            "Enumerate subdomains from public Certificate Transparency logs (crt.sh).",
+            "Transparency (crt.sh, caindo para o CertSpotter).",
+            "Enumerate subdomains from public Certificate Transparency logs "
+            "(crt.sh, falling back to CertSpotter).",
         )
 
     async def run(self, ctx: RunContext) -> list[Finding]:
@@ -65,10 +92,34 @@ class CtSubdomains(Module):
 
         timeout = coerce_timeout(ctx.options.get("timeout"), _DEFAULT_TIMEOUT)
 
-        try:
-            raw = await asyncio.to_thread(self.fetch, domain, timeout)
-            entries = json.loads(raw)
-        except Exception as e:
+        # O crt.sh cai com frequência mesmo estando no ar, então uma falha dele
+        # não encerra a consulta: cai para outra fonte de CT antes de desistir.
+        deadline = time.monotonic() + timeout
+        errors: list[str] = []
+        entries: object = None
+        used_source: str | None = None
+
+        for source, method, share in _SOURCES:
+            remaining = deadline - time.monotonic()
+            if remaining < _MIN_SOURCE_BUDGET:
+                break
+            # Each source gets a *slice* of the budget, never all of it. Handing
+            # crt.sh the whole deadline meant a crt.sh that hung — rather than
+            # failing fast — left nothing for the fallback, skipping it in
+            # exactly the case it exists for.
+            budget = min(remaining, timeout * share)
+            try:
+                raw = await asyncio.to_thread(getattr(self, method), domain, budget)
+                entries = json.loads(raw)
+            except Exception as e:  # noqa: BLE001 — a falha vira achado, não crash
+                errors.append(f"{source}: {type(e).__name__}: {e}")
+                continue
+            used_source = source
+            break
+
+        if used_source is None:
+            tried = ", ".join(err.split(":", 1)[0] for err in errors)
+            e = "; ".join(errors) or "no CT source was reachable within the budget"
             return [
                 ctx.finding(
                     self.id,
@@ -78,12 +129,14 @@ class CtSubdomains(Module):
                     ),
                     Severity.LOW,
                     description=Lf(
-                        "A consulta aos logs de CT para {domain} via crt.sh não "
-                        "foi concluída.",
-                        "The CT log lookup for {domain} via crt.sh did not complete.",
+                        "A consulta aos logs de CT para {domain} não foi "
+                        "concluída. Fontes tentadas: {tried}.",
+                        "The CT log lookup for {domain} did not complete. "
+                        "Sources tried: {tried}.",
                         domain=domain,
+                        tried=tried or "nenhuma/none",
                     ),
-                    evidence=f"{type(e).__name__}: {e}",
+                    evidence=str(e),
                     recommendation=L(
                         "Tente novamente mais tarde ou consulte outra fonte de CT; "
                         "o crt.sh pode estar lento ou com limite de requisições.",
@@ -127,16 +180,22 @@ class CtSubdomains(Module):
                 severity,
                 description=Lf(
                     "Encontrado(s) {count} subdomínio(s) único(s) de {domain} em "
-                    "logs públicos de Certificate Transparency (crt.sh).",
+                    "logs públicos de Certificate Transparency, via {source}.",
                     "Found {count} unique subdomain(s) of {domain} in public "
-                    "Certificate Transparency logs (crt.sh).",
+                    "Certificate Transparency logs, via {source}.",
                     count=count,
                     domain=domain,
+                    source=used_source,
                 ),
                 evidence=evidence,
                 recommendation=recommendation,
-                references=["https://crt.sh/"],
-                metadata={"domain": domain, "count": count, "subdomains": subdomains},
+                references=[_SOURCE_URLS[used_source]],
+                metadata={
+                    "domain": domain,
+                    "count": count,
+                    "subdomains": subdomains,
+                    "source": used_source,
+                },
             )
         ]
 
@@ -188,6 +247,24 @@ class CtSubdomains(Module):
             raise TimeoutError(f"crt.sh lookup budget of {timeout}s exhausted")
         raise last
 
+    def fetch_fallback(self, domain: str, timeout: float = _DEFAULT_TIMEOUT) -> str:
+        """Fetch the same question from CertSpotter. Blocking, like ``fetch``.
+
+        Used only when crt.sh fails. A single attempt: this is already the
+        second source, and CertSpotter rate-limits unauthenticated callers, so
+        hammering it would cost the next lookup rather than help this one.
+        """
+        url = _CERTSPOTTER_URL.format(domain=domain)
+        req = urllib.request.Request(url, headers={"User-Agent": _USER_AGENT})
+        try:
+            with urllib.request.urlopen(req, timeout=timeout) as resp:
+                return resp.read().decode("utf-8", errors="replace")
+        except urllib.error.HTTPError as e:
+            # File-like and holding a socket. CertSpotter rate-limits
+            # unauthenticated callers, so the 429 path is the expected one.
+            e.close()
+            raise
+
 
 # --- helpers ---------------------------------------------------------------
 def _retry_delay(error: urllib.error.HTTPError) -> float:
@@ -214,7 +291,11 @@ def _normalize_domain(target: str) -> str:
 
 
 def _extract_subdomains(entries: object, domain: str) -> list[str]:
-    """Parse crt.sh JSON into a sorted, deduplicated list of in-scope subdomains."""
+    """Parse CT JSON into a sorted, deduplicated list of in-scope subdomains.
+
+    Handles both shapes we query: crt.sh puts newline-separated names in
+    ``name_value``, CertSpotter puts a list in ``dns_names``.
+    """
     suffix = "." + domain
     found: set[str] = set()
 
@@ -224,10 +305,15 @@ def _extract_subdomains(entries: object, domain: str) -> list[str]:
     for entry in entries:
         if not isinstance(entry, dict):
             continue
-        name_value = entry.get("name_value", "")
-        if not isinstance(name_value, str):
-            continue
-        for line in name_value.splitlines():
+        names: list[str] = []
+        name_value = entry.get("name_value")
+        if isinstance(name_value, str):
+            names.extend(name_value.splitlines())
+        dns_names = entry.get("dns_names")
+        if isinstance(dns_names, list):
+            names.extend(n for n in dns_names if isinstance(n, str))
+
+        for line in names:
             name = line.strip().lower().rstrip(".")
             if name.startswith("*."):
                 name = name[2:]

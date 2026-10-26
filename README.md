@@ -137,6 +137,10 @@ finding — never a crash — when it is absent:
 | `vuln.nuclei` | `nuclei` | [projectdiscovery/nuclei](https://github.com/projectdiscovery/nuclei) |
 | `config_audit.electron_fuses` | `rea` | `npm i -g rea-agents` (Node `^22.23.4`, `^24.22.1` or `>=26.12.1`) |
 
+`recon.ct_subdomains` queries crt.sh and falls back to CertSpotter, because
+crt.sh returns an intermittent 502 even while healthy; both are public,
+unauthenticated CT indexes.
+
 `config_audit.electron_fuses` audits a packaged Electron app's build-time fuses
 — whether it honors `ELECTRON_RUN_AS_NODE`, respects `NODE_OPTIONS`, accepts
 `--inspect`, validates embedded ASAR integrity, and refuses code from outside

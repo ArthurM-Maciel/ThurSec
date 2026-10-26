@@ -38,6 +38,15 @@ _SAMPLE = json.dumps(
 )
 
 
+def _both_fail(monkeypatch, error=OSError("network unreachable")):
+    """Derruba as DUAS fontes de CT: o run() só desiste quando ambas falham."""
+    def boom(self, domain, *_a, **_kw):
+        raise error
+
+    monkeypatch.setattr(CtSubdomains, "fetch", boom)
+    monkeypatch.setattr(CtSubdomains, "fetch_fallback", boom)
+
+
 def _ctx(target="example.com", options=None):
     return RunContext(target=target, options=options or {})
 
@@ -102,10 +111,8 @@ async def test_run_normalizes_url_target(monkeypatch):
 
 
 async def test_run_handles_fetch_error_without_raising(monkeypatch):
-    def boom(self, domain, *_a):
-        raise OSError("network unreachable")
+    _both_fail(monkeypatch)
 
-    monkeypatch.setattr(CtSubdomains, "fetch", boom)
     findings = await CtSubdomains().run(_ctx())
     assert len(findings) == 1
     f = findings[0]
@@ -116,6 +123,9 @@ async def test_run_handles_fetch_error_without_raising(monkeypatch):
 
 async def test_run_handles_bad_json_without_raising(monkeypatch):
     monkeypatch.setattr(CtSubdomains, "fetch", lambda self, domain, *_a: "not json{")
+    monkeypatch.setattr(
+        CtSubdomains, "fetch_fallback", lambda self, domain, *_a: "not json{"
+    )
     findings = await CtSubdomains().run(_ctx())
     assert len(findings) == 1
     assert "Could not query" in findings[0].title
@@ -129,11 +139,13 @@ async def test_timeout_option_reaches_fetch(monkeypatch):
         CtSubdomains, "fetch", lambda self, domain, timeout=None: seen.append(timeout) or _SAMPLE
     )
 
+    share = ct_subdomains._SOURCES[0][2]
+
     await CtSubdomains().run(_ctx())
-    assert seen[-1] == ct_subdomains._DEFAULT_TIMEOUT
+    assert seen[-1] == pytest.approx(ct_subdomains._DEFAULT_TIMEOUT * share, abs=1.0)
 
     await CtSubdomains().run(_ctx(options={"timeout": 5}))
-    assert seen[-1] == 5.0
+    assert seen[-1] == pytest.approx(5.0 * share, abs=1.0)
 
 
 def test_fetch_retries_once_on_transient_http_error(monkeypatch):
@@ -218,10 +230,12 @@ async def test_bad_timeout_option_falls_back_to_default(monkeypatch):
     monkeypatch.setattr(
         CtSubdomains, "fetch", lambda self, domain, timeout=None: seen.append(timeout) or _SAMPLE
     )
+    expected = ct_subdomains._DEFAULT_TIMEOUT * ct_subdomains._SOURCES[0][2]
+
     await CtSubdomains().run(_ctx(options={"timeout": "rapido"}))
-    assert seen[-1] == ct_subdomains._DEFAULT_TIMEOUT
+    assert seen[-1] == pytest.approx(expected, abs=1.0)
     await CtSubdomains().run(_ctx(options={"timeout": -5}))
-    assert seen[-1] == ct_subdomains._DEFAULT_TIMEOUT
+    assert seen[-1] == pytest.approx(expected, abs=1.0)
 
 
 def test_fetch_gives_up_after_max_attempts(monkeypatch):
@@ -277,3 +291,129 @@ def test_permanent_failures_are_not_retried(monkeypatch):
         with pytest.raises(urllib.error.URLError):
             CtSubdomains().fetch("example.com")
         assert len(calls) == 1, f"{type(reason).__name__} não devia ser repetido"
+
+
+# --- fonte alternativa de CT -----------------------------------------------
+_CERTSPOTTER_SAMPLE = json.dumps(
+    [
+        {"id": "1", "dns_names": ["example.com", "www.example.com", "*.api.example.com"]},
+        {"id": "2", "dns_names": ["mail.example.com", "fora-do-escopo.org"]},
+    ]
+)
+
+
+def test_extract_handles_the_certspotter_shape():
+    """CertSpotter usa dns_names (lista); crt.sh usa name_value (texto)."""
+    subs = _extract_subdomains(json.loads(_CERTSPOTTER_SAMPLE), "example.com")
+
+    assert subs == ["api.example.com", "example.com", "mail.example.com",
+                    "www.example.com"]
+    assert "fora-do-escopo.org" not in subs
+
+
+@pytest.mark.asyncio
+async def test_certspotter_rescues_a_crtsh_failure(monkeypatch):
+    """O 502 do crt.sh não encerra mais a consulta: a outra fonte responde."""
+    monkeypatch.setattr(ct_subdomains.time, "sleep", lambda _s: None)
+
+    def crtsh_down(self, domain, *_a, **_kw):
+        raise urllib.error.HTTPError("https://crt.sh/", 502, "Bad Gateway", {}, None)
+
+    monkeypatch.setattr(CtSubdomains, "fetch", crtsh_down)
+    monkeypatch.setattr(
+        CtSubdomains, "fetch_fallback", lambda self, d, *_a: _CERTSPOTTER_SAMPLE
+    )
+    findings = await CtSubdomains().run(_ctx())
+
+    assert len(findings) == 1
+    assert findings[0].severity != Severity.LOW
+    assert findings[0].metadata["count"] == 4
+
+
+@pytest.mark.asyncio
+async def test_fallback_is_not_used_when_the_first_source_works(monkeypatch):
+    """Não gastar a cota do CertSpotter quando o crt.sh respondeu."""
+    calls = []
+    monkeypatch.setattr(CtSubdomains, "fetch", lambda self, d, *_a: _SAMPLE)
+    monkeypatch.setattr(
+        CtSubdomains,
+        "fetch_fallback",
+        lambda self, d, *_a: calls.append(d) or _CERTSPOTTER_SAMPLE,
+    )
+    await CtSubdomains().run(_ctx())
+
+    assert calls == []
+
+
+@pytest.mark.asyncio
+async def test_both_sources_failing_names_both_in_the_evidence(monkeypatch):
+    _both_fail(monkeypatch)
+    findings = await CtSubdomains().run(_ctx())
+
+    assert findings[0].severity == Severity.LOW
+    assert "crt.sh" in findings[0].evidence
+    assert "certspotter" in findings[0].evidence.lower()
+    # A descrição nomeia só o que foi realmente tentado.
+    assert "crt.sh" in findings[0].description
+    assert "certspotter" in findings[0].description.lower()
+
+
+@pytest.mark.asyncio
+async def test_a_hanging_first_source_still_leaves_budget_for_the_fallback(monkeypatch):
+    """O caso que motivou a fonte alternativa: crt.sh que trava, não que falha rápido.
+
+    Se a primeira fonte recebesse o orçamento inteiro, ela o consumiria inteiro
+    e a segunda nunca seria chamada — pulando a alternativa justamente quando
+    ela é necessária.
+    """
+    clock = {"t": 0.0}
+    monkeypatch.setattr(ct_subdomains.time, "monotonic", lambda: clock["t"])
+
+    def hangs(self, domain, budget, *_a):
+        clock["t"] += budget  # consome tudo o que lhe deram
+        raise TimeoutError("crt.sh hung")
+
+    rescued = []
+
+    def rescues(self, domain, budget, *_a):
+        rescued.append(budget)
+        return _CERTSPOTTER_SAMPLE
+
+    monkeypatch.setattr(CtSubdomains, "fetch", hangs)
+    monkeypatch.setattr(CtSubdomains, "fetch_fallback", rescues)
+    findings = await CtSubdomains().run(_ctx(options={"timeout": 30}))
+
+    assert rescued, "a fonte alternativa não chegou a ser chamada"
+    assert rescued[0] > ct_subdomains._MIN_SOURCE_BUDGET
+    assert findings[0].severity != Severity.LOW
+    assert findings[0].metadata["source"] == "CertSpotter"
+
+
+@pytest.mark.asyncio
+async def test_the_finding_names_the_source_that_actually_answered(monkeypatch):
+    """Relatar crt.sh quando quem respondeu foi o CertSpotter seria mentira."""
+    monkeypatch.setattr(
+        CtSubdomains, "fetch", lambda self, d, *_a: (_ for _ in ()).throw(OSError("down"))
+    )
+    monkeypatch.setattr(
+        CtSubdomains, "fetch_fallback", lambda self, d, *_a: _CERTSPOTTER_SAMPLE
+    )
+    findings = await CtSubdomains().run(_ctx())
+
+    assert findings[0].metadata["source"] == "CertSpotter"
+    assert "CertSpotter" in findings[0].description
+    assert findings[0].references == ["https://sslmate.com/ct_search_api/"]
+
+
+@pytest.mark.asyncio
+async def test_a_literal_null_body_is_not_reported_as_unreachable(monkeypatch):
+    """HTTP 200 com corpo 'null' não é 'nenhuma fonte alcançável'."""
+    monkeypatch.setattr(CtSubdomains, "fetch", lambda self, d, *_a: "null")
+    monkeypatch.setattr(
+        CtSubdomains, "fetch_fallback", lambda self, d, *_a: _CERTSPOTTER_SAMPLE
+    )
+    findings = await CtSubdomains().run(_ctx())
+
+    # 'null' é uma resposta válida: zero subdomínios, não uma falha de rede.
+    assert "unreachable" not in (findings[0].evidence or "")
+    assert findings[0].metadata["source"] == "crt.sh"
