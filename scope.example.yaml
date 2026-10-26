@@ -5,8 +5,8 @@
 #
 # Copy to scope.yaml and edit. scope.yaml is git-ignored by default.
 
-engagement: "Raiô Benefícios — internal security baseline"
-authorized_by: "arthur.maciel@raiobeneficios.com"
+engagement: "Example Corp — internal security baseline"
+authorized_by: "security@example.com"
 expires: 2026-12-31
 
 targets:

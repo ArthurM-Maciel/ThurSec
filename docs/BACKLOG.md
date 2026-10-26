@@ -328,7 +328,7 @@ unificado, sem perder scope gate nem padronização.
 
 ### Épico C3 — Auditoria de postura Supabase / cloud `[FEITO]`
 **Objetivo:** auditar a configuração de segurança de projetos Supabase/cloud da
-*própria* organização (casa com a infra real da Raiô, que usa Supabase).
+*própria* organização, para quem roda a stack do Supabase.
 **Valor:** detecta exposições de alto impacto — RLS desligado, policies
 permissivas, chaves vazadas, buckets públicos — direto no stack em produção,
 com achados acionáveis.

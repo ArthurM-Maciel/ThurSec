@@ -26,7 +26,7 @@ pip install -e ".[tui]"
 
 ```console
 $ thursec --version
-ThurSec 0.1.0
+ThurSec 0.2.0
 ```
 
 ### Bring up the local lab target
@@ -46,7 +46,7 @@ $ curl -s -o /dev/null -w "%{http_code}\n" http://localhost:8000/
 ```bash
 cat > scope.yaml <<'YAML'
 engagement: "ThurSec local demo"
-authorized_by: "arthur.maciel@raiobeneficios.com"
+authorized_by: "security@example.com"
 expires: 2026-12-31
 targets:
   - "127.0.0.1"
@@ -131,7 +131,7 @@ thursec run localhost:8000 -m vuln.http_methods --scope scope.yaml
 ```
 
 ```console
-Scope loaded: ThurSec local demo — authorized by arthur.maciel@raiobeneficios.com, expires 2026-12-31 (2 target pattern(s))
+Scope loaded: ThurSec local demo — authorized by security@example.com, expires 2026-12-31 (2 target pattern(s))
 Running 1 module(s) against localhost:8000
 
   ✓ vuln.http_methods: 1 finding(s), 1 notable
@@ -275,7 +275,7 @@ thursec run http://localhost:8000/ -m resilience.load_test \
 ```
 
 ```console
-Scope loaded: ThurSec local demo — authorized by arthur.maciel@raiobeneficios.com, expires 2026-12-31 (2 target pattern(s))
+Scope loaded: ThurSec local demo — authorized by security@example.com, expires 2026-12-31 (2 target pattern(s))
 Running 1 module(s) against http://localhost:8000/
 
   ✓ resilience.load_test: 1 finding(s), 0 notable
@@ -364,30 +364,30 @@ allowlist, and requires an explicit authorizer + date.
 ```bash
 # A recipient outside the allowlist → refused, nothing written:
 thursec awareness generate --name "Q4 Phishing Drill" \
-  --authorized-by "Arthur Maciel" --authorized-on 2026-10-01 \
-  --allow raiobeneficios.com \
-  --recipient alice@raiobeneficios.com --recipient mallory@gmail.com \
+  --authorized-by "Security Team" --authorized-on 2026-10-01 \
+  --allow example.com \
+  --recipient alice@example.com --recipient mallory@outro-dominio.example \
   --base-url "https://training.internal.example/learn" \
   -o /tmp/thursec-demo/awareness_campaign
 ```
 
 ```console
-awareness error: recipient(s) outside the allowlist — refusing to generate campaign artifacts: mallory@gmail.com
+awareness error: recipient(s) outside the allowlist — refusing to generate campaign artifacts: mallory@outro-dominio.example
 ```
 
 ```bash
 # All recipients in the allowlist → artifacts generated:
 thursec awareness generate --name "Q4 Phishing Drill" \
-  --authorized-by "Arthur Maciel" --authorized-on 2026-10-01 \
-  --allow raiobeneficios.com \
-  --recipient alice@raiobeneficios.com --recipient bob@raiobeneficios.com \
+  --authorized-by "Security Team" --authorized-on 2026-10-01 \
+  --allow example.com \
+  --recipient alice@example.com --recipient bob@example.com \
   --base-url "https://training.internal.example/learn" \
-  --org-contact "security@raiobeneficios.com" \
+  --org-contact "security@example.com" \
   -o /tmp/thursec-demo/awareness_campaign
 ```
 
 ```console
-Authorized by Arthur Maciel on 2026-10-01
+Authorized by Security Team on 2026-10-01
 Allowlist OK · 2 recipient(s) validated
 Artifacts written to /tmp/thursec-demo/awareness_campaign/:
   landing_page.html   (educational — NO credential capture)

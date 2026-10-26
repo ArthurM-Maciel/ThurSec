@@ -7,6 +7,69 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Version is now read from a single source.** `pyproject.toml` takes its
+  version from `thursec/__init__.py` (hatch dynamic version), so `thursec
+  --version` can no longer drift behind the changelog — it reported `0.1.0`
+  while the project was already at `0.2.0`. The HTTP `User-Agent` of every
+  module that calls out now derives from `__version__` too, instead of a
+  hardcoded `ThurSec/0.1` — including the four that send it as a request header
+  (`vuln.http_methods`, `config_audit.tls_headers`, `config_audit.cookies` and
+  `resilience.load_test`), whose traffic is the most visible to a target's logs.
+- **`DEMO.md`'s sample transcript no longer disagrees with `--version`.**
+- **Network timeouts no longer expire on healthy lookups.** `recon.ct_subdomains`
+  went from 15s to 45s (crt.sh aggregates every public CT log and routinely
+  takes tens of seconds) and `vuln.cve_lookup` from 20s to 30s. Both were
+  turning in a LOW "could not query" finding on perfectly good runs.
+- **Transient crt.sh failures are retried.** crt.sh returns intermittent
+  429/5xx even while healthy — measured at roughly 2 of 3 requests, with the
+  502 coming back in under a second — so a single attempt turned in a false
+  "could not query" finding on most runs. `recon.ct_subdomains` now makes up to
+  3 attempts, covering dropped and timed-out connections as well as explicit
+  HTTP error responses, including the ones `urllib` wraps in a `URLError`, and
+  honours `Retry-After` on a 429 (clamped to 30s). Permanent failures are not
+  retried: an NXDOMAIN or a TLS verification error does not improve on a second
+  try, so retrying one would only delay the same finding.
+- **A malformed `--opt timeout=` no longer masquerades as a network failure.**
+  Both modules now coerce the option before the request, so a typo, zero or a
+  negative value falls back to the default instead of being swallowed into a
+  LOW "could not query" finding.
+- **`--opt api_key=` can force an anonymous NVD query** even with `NVD_API_KEY`
+  exported; previously an explicitly empty option fell through to the
+  environment.
+
+### Added
+
+- **An unknown `--opt` module prefix is now a usage error.** A dotted key is
+  addressed to a module id, so a typo in that prefix (`recon.dns_enum.timeout`
+  — the module is `recon.dns`) would otherwise be dropped as silently as a key
+  meant for a module that is not running, leaving the operator with default
+  values and no sign their option was ignored. The CLI validates the prefix
+  against the registry and fails like it does for a missing `=`.
+- **Module-scoped `--opt` keys.** `--opt` was a single flat namespace handed to
+  every module, so `-c vuln --opt timeout=60` cut `vuln.nuclei` from its 600s
+  default down to 60 and made it report a bogus timeout. A key may now carry a
+  module id — `--opt vuln.cve_lookup.timeout=60` — which wins over the bare key
+  for that module and is invisible to the others. Bare keys still apply to the
+  whole run, so nothing existing changes. Resolution lives in
+  `core.context.scoped_options`; modules read `ctx.options` exactly as before.
+- **Configurable per-run timeout** for `recon.ct_subdomains` and
+  `vuln.cve_lookup` via `--opt timeout=<seconds>`. The option is a *total*
+  budget, not per attempt: with retries, a per-attempt reading would multiply a
+  45s timeout into ~195s of stalled run, and modules run sequentially.
+- **`core.context.coerce_timeout`**, one shared timeout coercion replacing four
+  near-identical copies (`recon.nmap`, `vuln.nuclei`, `resilience.load_test`
+  and the two added here). It also rejects booleans, which the copies accepted:
+  the CLI turns the literal `true` into `True` and `float(True)` is `1.0`, so
+  `--opt timeout=true` used to impose a one-second timeout — the shortest
+  possible, and exactly the false "could not query" finding the coercion exists
+  to prevent.
+- **Optional NVD API key** for `vuln.cve_lookup`, from `--opt api_key=...` or
+  the `NVD_API_KEY` environment variable, sent as the `apiKey` request header.
+  It raises NIST's rate limit from 5 to 50 requests per window. The key is
+  never logged or written to a report.
+
 ## [0.2.0] - 2026-10-05
 
 Second release: adds the first **legitimate counterparts** to the vetoed

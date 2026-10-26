@@ -36,8 +36,8 @@ and going out-of-scope an explicit act.
 
 ```yaml
 # scope.yaml  (copy from scope.example.yaml; git-ignored)
-engagement: "Raiô Benefícios — internal baseline"
-authorized_by: "arthur.maciel@raiobeneficios.com"
+engagement: "Example Corp — internal baseline"
+authorized_by: "security@example.com"
 expires: 2026-12-31
 targets:
   - "*.lab.example"      # one label: a.lab.example ✓  deep.sub.lab.example ✗
@@ -102,8 +102,57 @@ thursec run host.lab.example -c config_audit --scope scope.yaml -o report.html
 A bare `thursec run <target>` (no `-m`/`-c`) runs **passive modules only**, so it
 can never touch an out-of-scope host by accident.
 
+Modules that call a public API accept a `timeout` option, and the NVD lookup
+accepts an optional API key — without one NIST rate-limits to 5 requests per
+window, which is the usual cause of a slow or timed-out `vuln.cve_lookup`:
+
+```bash
+export NVD_API_KEY=...
+thursec run nginx:1.18.0 -m vuln.cve_lookup --opt timeout=60
+```
+
+`--opt api_key=...` works too, but prefer the environment variable: an `--opt`
+value is visible in `ps` output and lands in shell history. ThurSec never logs
+the key or writes it to a report, but it cannot protect your command line.
+
+An `--opt` key applies to **every** module in the run. Prefix it with a module
+id to scope it to that module alone — so a short timeout for the NVD lookup
+can't truncate `vuln.nuclei`, whose default is 600s:
+
+```bash
+thursec run alvo -c vuln --scope scope.yaml --opt vuln.cve_lookup.timeout=60
+```
+
 For a guided, fully self-contained walkthrough (safe, localhost-only), see
 [`DEMO.md`](DEMO.md).
+
+## Optional external tools
+
+Most modules are pure stdlib. Three delegate to a binary and degrade to an INFO
+finding — never a crash — when it is absent:
+
+| Module | Needs | Install |
+| --- | --- | --- |
+| `recon.nmap` | `nmap` | `brew install nmap` / `apt install nmap` |
+| `vuln.nuclei` | `nuclei` | [projectdiscovery/nuclei](https://github.com/projectdiscovery/nuclei) |
+| `config_audit.electron_fuses` | `rea` | `npm i -g rea-agents` (Node `^22.23.4`, `^24.22.1` or `>=26.12.1`) |
+
+`config_audit.electron_fuses` audits a packaged Electron app's build-time fuses
+— whether it honors `ELECTRON_RUN_AS_NODE`, respects `NODE_OPTIONS`, accepts
+`--inspect`, validates embedded ASAR integrity, and refuses code from outside
+`app.asar`. It reads the fuse wire in the binary through
+[REA](https://github.com/morluto/rea); it never launches the app and never uses
+the network, which is why it is PASSIVE. The subject is a local path:
+
+```bash
+thursec run /Applications/Example.app -m config_audit.electron_fuses
+```
+
+ThurSec adds the judgement REA deliberately leaves out: REA reports fuse
+*state*, ThurSec says which state is a weakness and why. Two limits are kept
+rather than glossed over — a missing or truncated fuse sentinel is reported as
+**unknown**, never as "insecure", and a fuse is a build-time default, so a
+finding is exposure, not confirmed exploitation.
 
 ## Writing a module
 
