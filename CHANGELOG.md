@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **The dependency audit no longer takes minutes.** OSV was queried one package
+  at a time, so a lock file of a few hundred packages serialised into 2+ minutes
+  for a landing page. The queries are independent, so they now run with a
+  concurrency cap of 8 — the same project went to 32 seconds for all 284
+  packages. The cap keeps a free public API from being hammered.
+
 - **A repository audit was mostly noise, at the top severity.** `thursec run .`
   fans out to every passive module, and the domain/product ones ran against the
   path anyway: `vuln.cve_lookup` keyword-searched the NVD for `"."` and returned

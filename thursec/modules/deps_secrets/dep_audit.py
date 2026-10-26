@@ -1,7 +1,13 @@
-"""Dependency audit — check a project's pinned Python deps against OSV.
+"""Dependency audit — check a project's pinned deps against OSV.
 
-Passive by design: it reads dependency manifests on disk (``requirements*.txt``
-and ``pyproject.toml``) and queries the public, free, no-auth OSV database
+Covers two ecosystems, because a real project is rarely only one: Python
+(``requirements*.txt``, ``pyproject.toml``) and npm (``package-lock.json``,
+with ``package.json`` reported as unpinned since its ranges cannot be resolved
+to a single version). OSV indexes both behind the same API — only the
+``ecosystem`` field changes — so adding npm is a parser plus a constant.
+
+Passive by design: it reads dependency manifests on disk and queries the
+public, free, no-auth OSV database
 (https://osv.dev) for known vulnerabilities. It never touches the audited
 project's own infrastructure and needs no scope gate — the only network call is
 to osv.dev, a public vulnerability index.
@@ -35,12 +41,20 @@ except ModuleNotFoundError:  # pragma: no cover - defensive for <3.11.
     tomllib = None  # type: ignore[assignment]
 
 _OSV_QUERY_URL = "https://api.osv.dev/v1/query"
-_OSV_ECOSYSTEM = "PyPI"
+_ECOSYSTEM_PYPI = "PyPI"
+_ECOSYSTEM_NPM = "npm"
+_OSV_ECOSYSTEM = _ECOSYSTEM_PYPI  # padrão, mantido para compatibilidade
 _OSV_VULN_URL = "https://osv.dev/vulnerability/"
 _USER_AGENT = f"ThurSec/{__version__}"
 _TIMEOUT = 20
 # Cap how many distinct packages we query so a huge lockfile can't blow up a run.
 _MAX_PACKAGES = 200
+# Consultas simultâneas à OSV. Pública e gratuita: paralelizar sim, martelar não.
+_CONCURRENCY = 8
+# Lockfiles do npm e equivalentes. Só o do npm é parseado hoje, mas a presença
+# de qualquer um deles significa que o projeto FIXA versões — então as faixas do
+# package.json não são "dependência não fixada" e avisar seria conselho errado.
+_NPM_LOCKFILES = frozenset({"package-lock.json", "yarn.lock", "pnpm-lock.yaml"})
 
 # A requirement line with an exact pin: ``name==1.2.3`` (extras/markers stripped).
 # Only ``==`` is resolvable to a single version; ``>=``, ``~=`` etc. are not.
@@ -65,15 +79,17 @@ class DepAudit(Module):
     category = Category.DEPS_SECRETS
     intensity = Intensity.PASSIVE
     description = L(
-        "Analisa os manifestos de dependências Python de um projeto "
-        "(requirements*.txt, pyproject.toml) e verifica cada pacote fixado "
-        "contra a base pública de vulnerabilidades OSV. Sinaliza versões "
-        "sabidamente vulneráveis e dependências não fixadas. Passivo: lê "
-        "arquivos localmente e consulta apenas osv.dev.",
-        "Parse a project's Python dependency manifests (requirements*.txt, "
-        "pyproject.toml) and check each pinned package against the public OSV "
-        "vulnerability database. Flags known-vulnerable versions and unpinned "
-        "dependencies. Passive: reads files locally and queries osv.dev only.",
+        "Analisa os manifestos de dependências de um projeto — Python "
+        "(requirements*.txt, pyproject.toml) e npm (package-lock.json, "
+        "package.json) — e verifica cada pacote fixado contra a base pública "
+        "de vulnerabilidades OSV. Sinaliza versões sabidamente vulneráveis e "
+        "dependências não fixadas. Passivo: lê arquivos localmente e consulta "
+        "apenas osv.dev.",
+        "Parse a project's dependency manifests — Python (requirements*.txt, "
+        "pyproject.toml) and npm (package-lock.json, package.json) — and check "
+        "each pinned package against the public OSV vulnerability database. "
+        "Flags known-vulnerable versions and unpinned dependencies. Passive: "
+        "reads files locally and queries osv.dev only.",
     )
 
     async def run(self, ctx: RunContext) -> list[Finding]:
@@ -101,25 +117,38 @@ class DepAudit(Module):
                 ctx.finding(
                     self.id,
                     L(
-                        "Nenhum manifesto de dependências Python encontrado",
-                        "No Python dependency manifests found",
+                        "Nenhum manifesto de dependências encontrado",
+                        "No dependency manifests found",
                     ),
                     Severity.INFO,
                     description=Lf(
-                        "Nenhum requirements*.txt ou pyproject.toml foi encontrado "
-                        "em {base}; não há dependências Python a auditar.",
-                        "No requirements*.txt or pyproject.toml was found under "
-                        "{base}; there are no Python dependencies to audit.",
+                        "Nenhum requirements*.txt, pyproject.toml, "
+                        "package-lock.json ou package.json foi encontrado em "
+                        "{base}; não há dependências a auditar.",
+                        "No requirements*.txt, pyproject.toml, package-lock.json or "
+                        "package.json was found under {base}; there are no "
+                        "dependencies to audit.",
                         base=str(base),
                     ),
                 )
             ]
 
-        # Keyed by (canonical name, version) for dedup; value keeps the manifest
-        # it came from and the name as the user actually wrote it.
-        pinned: dict[tuple[str, str], tuple[str, str]] = {}
+        # Keyed by (ecosystem, canonical name, version) for dedup; the value
+        # keeps the manifest it came from and the name as the user wrote it.
+        pinned: dict[tuple[str, str, str], tuple[str, str]] = {}
+        # Um package.json ao lado de um package-lock.json não tem dependência
+        # "não fixada": faixas no manifesto mais um lock é a prática correta do
+        # npm, e o lock já resolve cada uma para uma versão exata. Avisar ali
+        # seria conselho errado — e eram 27 achados num projeto pequeno.
+        locked_dirs = {
+            m.parent for m in manifests if m.name in _NPM_LOCKFILES
+        }
+
         for manifest in manifests:
             rel = _relpath(manifest, base)
+            ecosystem = _ecosystem_for(manifest)
+            if manifest.name == "package.json" and manifest.parent in locked_dirs:
+                continue
             try:
                 deps, unpinned = _parse_manifest(manifest)
             except Exception as e:  # defensive: parsing never aborts the module.
@@ -144,7 +173,8 @@ class DepAudit(Module):
                 continue
             for name, version in deps:
                 # First manifest that pins a (name, version) wins the attribution.
-                pinned.setdefault((_canon(name), version), (rel, name))
+                key = (ecosystem, _canon(name, ecosystem), version)
+                pinned.setdefault(key, (rel, name))
             for name in unpinned:
                 findings.append(
                     ctx.finding(
@@ -194,13 +224,67 @@ class DepAudit(Module):
             )
             return findings
 
+        cap = _coerce_cap(ctx.options.get("max_packages"))
+        if len(pinned) > cap:
+            findings.append(
+                ctx.finding(
+                    self.id,
+                    Lf(
+                        "Auditoria parcial: {n} de {total} pacotes verificados",
+                        "Partial audit: {n} of {total} packages checked",
+                        n=cap,
+                        total=len(pinned),
+                    ),
+                    Severity.LOW,
+                    description=Lf(
+                        "O projeto fixa {total} pacotes e o teto desta execução "
+                        "é {n}, então {resto} não foram consultados. Uma "
+                        "auditoria incompleta apresentada como completa é pior "
+                        "que nenhuma.",
+                        "The project pins {total} packages and this run is "
+                        "capped at {n}, so {resto} were not queried. An "
+                        "incomplete audit presented as complete is worse than "
+                        "none.",
+                        total=len(pinned),
+                        n=cap,
+                        resto=len(pinned) - cap,
+                    ),
+                    recommendation=L(
+                        "Aumente o teto com "
+                        "--opt deps_secrets.dep_audit.max_packages=<n>.",
+                        "Raise the cap with "
+                        "--opt deps_secrets.dep_audit.max_packages=<n>.",
+                    ),
+                    metadata={"pinned": len(pinned), "cap": cap},
+                )
+            )
+
+        # As consultas são independentes entre si, então vão em paralelo com um
+        # teto de concorrência: um lockfile tem centenas de pacotes e, em série,
+        # uma landing page levava mais de dois minutos. O teto existe para não
+        # martelar uma API pública e gratuita.
+        alvos = [
+            (rel, name, version, ecosystem)
+            for (ecosystem, _c, version), (rel, name) in list(pinned.items())[:cap]
+        ]
+        gate = asyncio.Semaphore(_CONCURRENCY)
+
+        async def consultar(name: str, version: str, ecosystem: str):
+            async with gate:
+                return await asyncio.to_thread(
+                    self._query_osv, name, version, ecosystem
+                )
+
+        resultados = await asyncio.gather(
+            *(consultar(n, v, e) for _rel, n, v, e in alvos),
+            return_exceptions=True,
+        )
+
         audited = 0
         vulnerable = 0
-        for (_canon_name, version), (rel, name) in list(pinned.items())[:_MAX_PACKAGES]:
+        for (rel, name, version, _eco), vulns in zip(alvos, resultados):
             audited += 1
-            try:
-                vulns = await asyncio.to_thread(self._query_osv, name, version)
-            except Exception as e:
+            if isinstance(vulns, BaseException):
                 findings.append(
                     ctx.finding(
                         self.id,
@@ -216,7 +300,7 @@ class DepAudit(Module):
                             "The OSV lookup did not complete, so this package "
                             "could not be checked for known vulnerabilities.",
                         ),
-                        evidence=f"{type(e).__name__}: {e}",
+                        evidence=f"{type(vulns).__name__}: {vulns}",
                         recommendation=L(
                             "Tente novamente com acesso de rede ao osv.dev.",
                             "Retry with network access to osv.dev.",
@@ -251,7 +335,9 @@ class DepAudit(Module):
         return findings
 
     # --- isolable OSV HTTP layer (monkeypatched in tests) ------------------
-    def _query_osv(self, name: str, version: str) -> list[dict]:
+    def _query_osv(
+        self, name: str, version: str, ecosystem: str = _OSV_ECOSYSTEM
+    ) -> list[dict]:
         """Query OSV for one (package, version). Return a list of vuln dicts.
 
         Isolated so tests replace it with canned data — no network. Blocking;
@@ -260,7 +346,7 @@ class DepAudit(Module):
         payload = json.dumps(
             {
                 "version": version,
-                "package": {"name": name, "ecosystem": _OSV_ECOSYSTEM},
+                "package": {"name": name, "ecosystem": ecosystem},
             }
         ).encode()
         req = urllib.request.Request(
@@ -285,7 +371,13 @@ def _find_manifests(root: Path) -> list[Path]:
     """Return the dependency manifests to parse.
 
     If *root* is a file, audit just that file. If it's a directory, pick up
-    ``requirements*.txt`` and ``pyproject.toml`` at its top level.
+    ``requirements*.txt``, ``pyproject.toml``, ``package-lock.json`` and
+    ``package.json`` at its top level.
+
+    ``package.json`` is collected even when a lock file is present, but the
+    caller skips parsing it in that case: the lock already carries the exact
+    versions, and the ranges in ``package.json`` are not "unpinned" when a lock
+    sits beside them.
     """
     if root.is_file():
         return [root]
@@ -295,8 +387,10 @@ def _find_manifests(root: Path) -> list[Path]:
             if not entry.is_file():
                 continue
             n = entry.name
-            if n == "pyproject.toml" or (
-                n.startswith("requirements") and n.endswith(".txt")
+            if (
+                n in ("pyproject.toml", "package.json")
+                or n in _NPM_LOCKFILES
+                or (n.startswith("requirements") and n.endswith(".txt"))
             ):
                 found.append(entry)
     except OSError:
@@ -312,7 +406,92 @@ def _parse_manifest(path: Path) -> tuple[list[tuple[str, str]], list[str]]:
     """
     if path.name == "pyproject.toml":
         return _parse_pyproject(path)
+    if path.name == "package-lock.json":
+        return _parse_package_lock(path)
+    if path.name in _NPM_LOCKFILES:
+        # yarn.lock e pnpm-lock.yaml não são JSON e ainda não têm parser. São
+        # coletados só como sinal de que o projeto fixa versões; parseá-los como
+        # requirements.txt produziria lixo.
+        return [], []
+    if path.name == "package.json":
+        return _parse_package_json(path)
     return _parse_requirements(path)
+
+
+def _coerce_cap(value: object) -> int:
+    """Teto de pacotes a consultar, a partir de --opt max_packages."""
+    if isinstance(value, bool):
+        return _MAX_PACKAGES
+    try:
+        n = int(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return _MAX_PACKAGES
+    return n if n > 0 else _MAX_PACKAGES
+
+
+def _ecosystem_for(path: Path) -> str:
+    """Which OSV ecosystem a manifest belongs to."""
+    if path.name == "package.json" or path.name in _NPM_LOCKFILES:
+        return _ECOSYSTEM_NPM
+    return _ECOSYSTEM_PYPI
+
+
+def _parse_package_lock(path: Path) -> tuple[list[tuple[str, str]], list[str]]:
+    """Exact versions from an npm lock file (lockfileVersion 1, 2 and 3)."""
+    doc = json.loads(path.read_text(encoding="utf-8", errors="replace") or "{}")
+    pinned: list[tuple[str, str]] = []
+
+    # v2/v3: a flat "packages" map keyed by install path.
+    packages = doc.get("packages")
+    if isinstance(packages, dict):
+        for key, meta in packages.items():
+            if not key or not isinstance(meta, dict):
+                continue  # "" is the project itself
+            if "node_modules/" not in key:
+                # Um membro de workspace num monorepo é indexado pelo próprio
+                # diretório ("packages/api"). Não é release pública: consultar
+                # a OSV por esse nome dá falso positivo por colisão, manda um
+                # caminho como nome de pacote, e gasta vaga sob o teto.
+                continue
+            if meta.get("link") is True:  # workspace symlink, not a release
+                continue
+            name = meta.get("name") or key.rsplit("node_modules/", 1)[-1]
+            version = meta.get("version")
+            if isinstance(name, str) and isinstance(version, str) and version:
+                pinned.append((name, version))
+
+    # v1: a nested "dependencies" tree.
+    def walk(tree: object) -> None:
+        if not isinstance(tree, dict):
+            return
+        for name, meta in tree.items():
+            if not isinstance(meta, dict):
+                continue
+            version = meta.get("version")
+            if isinstance(version, str) and version:
+                pinned.append((name, version))
+            walk(meta.get("dependencies"))
+
+    if not packages:
+        walk(doc.get("dependencies"))
+
+    return pinned, []
+
+
+def _parse_package_json(path: Path) -> tuple[list[tuple[str, str]], list[str]]:
+    """npm ranges cannot resolve to one version, so everything is 'unpinned'.
+
+    Reported rather than guessed: '^4.4.1' installs whatever is newest in the
+    range, so auditing the literal string would check a version that may not be
+    the one deployed. The lock file is what carries the truth.
+    """
+    doc = json.loads(path.read_text(encoding="utf-8", errors="replace") or "{}")
+    unpinned: list[str] = []
+    for field in ("dependencies", "devDependencies", "optionalDependencies"):
+        block = doc.get(field)
+        if isinstance(block, dict):
+            unpinned.extend(str(n) for n in block)
+    return [], unpinned
 
 
 def _parse_requirements(path: Path) -> tuple[list[tuple[str, str]], list[str]]:
@@ -366,8 +545,15 @@ def _classify(
         unpinned.append(name_m.group(1))
 
 
-def _canon(name: str) -> str:
-    """PEP 503 normalisation so 'Flask' and 'flask' hit the same OSV record."""
+def _canon(name: str, ecosystem: str = _ECOSYSTEM_PYPI) -> str:
+    """Normalise a package name for dedup, per ecosystem.
+
+    PEP 503 folds ``-``, ``_`` and ``.`` together so 'Flask' and 'flask' hit the
+    same OSV record. npm must **not** be folded that way: ``-`` and ``_`` are
+    distinct characters in a package name there, and scoped names carry a ``/``.
+    """
+    if ecosystem == _ECOSYSTEM_NPM:
+        return name
     return re.sub(r"[-_.]+", "-", name).lower()
 
 
