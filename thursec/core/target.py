@@ -20,6 +20,8 @@ the rest of ThurSec, so it is safe to use anywhere (no circular imports).
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import ipaddress
 import re
 
@@ -33,6 +35,63 @@ class TargetError(Exception):
 # A single DNS label: 1-63 chars of letters/digits/hyphen, not starting or
 # ending with a hyphen. The negative look-arounds reject the ``-sS`` shape.
 _LABEL = re.compile(r"(?!-)[A-Za-z0-9-]{1,63}(?<!-)$")
+
+
+def looks_like_local_path(raw: str) -> bool:
+    """True when *raw* is plainly a filesystem path, not a host or product.
+
+    A single ``thursec run <alvo>`` fans out to every passive module, and the
+    passive set mixes two kinds of subject: modules that read local files
+    (secret_scan, server_configs) and modules that ask about a domain or a
+    product (dns, whois, ct_subdomains, cve_lookup). Pointed at a repository,
+    the second kind used to run anyway — ``vuln.cve_lookup`` keyword-searched
+    the NVD for ``"."`` and returned CRITICAL findings reading "CVE-1999-0233
+    affects .". Noise at that severity buries the real findings.
+
+    The rule is deliberately biased toward *network*: skipping a module in
+    silence is a false negative, and in a security tool that is worse than the
+    noise this exists to remove. So a slash is not enough to call something a
+    path — ``10.0.0.0/24``, ``example.com/admin`` and ``host:8443/`` are all
+    legitimate network targets that contain one. Anything
+    :func:`validate_target` accepts is treated as a target, never a path.
+
+    What remains a path: the shapes that cannot be a host (``.``, ``..``,
+    ``./``, ``../``, ``~``, an absolute or Windows/UNC path), and a bare name
+    that `validate_target` rejects but that exists on disk.
+    """
+    text = (raw or "").strip()
+    if not text:
+        return False
+    if "://" in text:  # a URL is a network target, not a path
+        return False
+
+    # Shapes that cannot be a hostname, whatever else they look like.
+    if text in {".", ".."} or text.startswith(("./", "../", "~", "/", "\\")):
+        return True
+    if re.match(r"^[A-Za-z]:[\\/]", text):  # C:\... or C:/...
+        return True
+
+    # A relative path with a separator (``a/b``) has the same shape as
+    # ``host/path``. Existence on disk decides: ``10.0.0.0/24`` and
+    # ``example.com/admin`` are not files, a relative path usually is.
+    if ("/" in text or "\\" in text):
+        try:
+            if Path(text).exists():
+                return True
+        except (OSError, ValueError):
+            pass
+
+    # A valid network target is a target, even with a slash in it (CIDR, path).
+    try:
+        validate_target(text)
+        return False
+    except TargetError:
+        pass
+
+    try:
+        return Path(text).exists()
+    except (OSError, ValueError):
+        return False
 
 
 def validate_target(raw: str) -> str:

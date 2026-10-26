@@ -9,6 +9,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A repository audit was mostly noise, at the top severity.** `thursec run .`
+  fans out to every passive module, and the domain/product ones ran against the
+  path anyway: `vuln.cve_lookup` keyword-searched the NVD for `"."` and returned
+  **7 CRITICAL** findings reading "CVE-1999-0233 affects .", while `recon.dns`,
+  `recon.whois` and `recon.ct_subdomains` added "could not look up" noise and
+  `config_audit.electron_fuses` handed the repository directory to REA. A real
+  audit of this repo reported CRITICAL 10 / HIGH 17 / MEDIUM 29, of which
+  almost all was meaningless — which buries the real findings and teaches the
+  operator to distrust the severity column. Those modules now stay silent when
+  the target is plainly a local path (`core.target.looks_like_local_path`), and
+  `electron_fuses` requires an `.app` bundle or a file rather than any existing
+  directory. The same audit now reports CRITICAL 0 / HIGH 2 after excluding
+  fixtures.
+
+  The path test is biased toward *network* on purpose: a slash does not make a
+  path, because `10.0.0.0/24`, `example.com/admin` and `host:8443/` are all
+  legitimate targets that contain one. Anything `validate_target` accepts stays
+  a target — skipping a real target in silence is a false negative, and in a
+  security tool that is worse than the noise being removed. A relative `a/b`
+  is settled by whether it exists on disk.
+
 - **`deps_secrets.secret_scan` missed an AWS secret key in a `.env`.** The rule
   required the value to be quoted, so it matched `aws_secret_access_key = "..."`
   in source but not `AWS_SECRET_ACCESS_KEY=...` in a `.env` file or

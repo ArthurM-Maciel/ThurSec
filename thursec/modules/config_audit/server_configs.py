@@ -21,6 +21,7 @@ from pathlib import Path
 from ...core.context import RunContext
 from ...core.finding import Finding, Severity
 from ...core.i18n import L, Lf
+from ...core.paths import is_excluded, parse_excludes
 from ...core.module import Category, Intensity, Module
 
 # Skip anything bigger than this — real config lives in modest text files, and
@@ -267,8 +268,11 @@ class ServerConfigAudit(Module):
 
         base = root if root.is_dir() else root.parent
         files = [root] if root.is_file() else _walk(root)
+        excludes = parse_excludes(ctx.options.get("exclude"))
 
         for path in files:
+            if is_excluded(_relpath(path, base), excludes):
+                continue
             text = _read_text(path)
             if text is None:
                 continue

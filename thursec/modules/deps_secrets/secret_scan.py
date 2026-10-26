@@ -19,6 +19,7 @@ from pathlib import Path
 from ...core.context import RunContext
 from ...core.finding import Finding, Severity
 from ...core.i18n import L, Lf
+from ...core.paths import is_excluded, parse_excludes
 from ...core.module import Category, Intensity, Module
 
 # Directories we never descend into: VCS metadata, vendored deps, build output,
@@ -153,10 +154,13 @@ class SecretScan(Module):
 
         base = root if root.is_dir() else root.parent
         files = [root] if root.is_file() else _walk(root)
+        excludes = parse_excludes(ctx.options.get("exclude"))
 
         for path in files:
+            rel = _relpath(path, base)
+            if is_excluded(rel, excludes):
+                continue
             for lineno, line, name, value, sev in _scan_file(path):
-                rel = _relpath(path, base)
                 findings.append(
                     ctx.finding(
                         self.id,

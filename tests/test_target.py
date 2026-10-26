@@ -2,7 +2,7 @@
 
 import pytest
 
-from thursec.core.target import TargetError, validate_target
+from thursec.core.target import TargetError, looks_like_local_path, validate_target
 
 
 # --- accepted targets ------------------------------------------------------
@@ -59,3 +59,72 @@ def test_validate_target_error_message_mentions_flag():
     with pytest.raises(TargetError) as exc:
         validate_target("--script=exploit")
     assert "flag" in str(exc.value).lower()
+
+
+# --- caminho local vs alvo de rede -----------------------------------------
+@pytest.mark.parametrize(
+    "alvo",
+    [".", "..", "./repo", "../repo", "/tmp/projeto", "~/dev/raio"],
+)
+def test_reconhece_caminho_local(alvo):
+    assert looks_like_local_path(alvo) is True
+
+
+def test_caminho_relativo_sem_prefixo_decide_pela_existencia(tmp_path, monkeypatch):
+    """'a/b' tem a mesma forma de 'host/path': quem decide é existir no disco."""
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "a").mkdir()
+    (tmp_path / "a" / "b").mkdir()
+
+    assert looks_like_local_path("a/b") is True
+    assert looks_like_local_path("nao/existe") is False
+
+
+@pytest.mark.parametrize(
+    "alvo",
+    [
+        "example.com",
+        "sub.example.com",
+        "nginx:1.18.0",
+        "http://127.0.0.1:8000",
+        "https://example.com/a/b",
+        "10.0.0.5",
+        "localhost:8000",
+        "backoffice",
+        "",
+    ],
+)
+def test_nao_confunde_alvo_de_rede_com_caminho(alvo):
+    assert looks_like_local_path(alvo) is False
+
+
+def test_um_diretorio_homonimo_nao_sequestra_um_host(tmp_path, monkeypatch):
+    """Host interno não vira 'caminho' só porque existe pasta com o mesmo nome.
+
+    'backoffice' é um hostname válido — e varrer um host de verdade importa
+    mais do que silenciar o ruído de um diretório homônimo. Para auditar a
+    pasta, use './backoffice'.
+    """
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "backoffice").mkdir()
+
+    assert looks_like_local_path("backoffice") is False
+    assert looks_like_local_path("./backoffice") is True
+    assert looks_like_local_path("https://backoffice/") is False
+
+
+@pytest.mark.parametrize(
+    "alvo",
+    [
+        "10.0.0.0/24",            # CIDR — barra não faz dele caminho
+        "192.168.56.0/24",
+        "example.com/admin",      # host com path
+        "host.lab.example:8443/",
+        "https://example.com/a",
+    ],
+)
+def test_alvo_de_rede_com_barra_nao_e_caminho(alvo):
+    """Pular em silêncio um alvo válido é falso negativo — pior que ruído."""
+    assert looks_like_local_path(alvo) is False
+    # E segue sendo um alvo que o validador aceita.
+    validate_target(alvo)

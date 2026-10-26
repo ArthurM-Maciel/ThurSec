@@ -156,12 +156,14 @@ class ElectronFuses(Module):
             return [self._usage_finding(ctx)]
 
         path = Path(raw_path).expanduser()
+        if not explicit and not _plausibly_electron(path):
+            # This module is PASSIVE, so it runs in every bare `thursec run X`.
+            # Without an explicit --opt path= it stays silent unless the target
+            # really looks like a packaged app: a hostname is not a path, and a
+            # repository directory is not an Electron bundle. Running REA on one
+            # anyway produced a LOW "could not read the fuses" on every audit.
+            return []
         if not path.exists():
-            if not explicit:
-                # The target is a hostname, not a path. This module is PASSIVE
-                # and so runs in every bare `thursec run <host>`; staying silent
-                # keeps a network report free of "Path does not exist: host".
-                return []
             return [self._missing_path_finding(ctx, path)]
 
         timeout = coerce_timeout(ctx.options.get("timeout"), _DEFAULT_TIMEOUT)
@@ -311,6 +313,24 @@ class ElectronFuses(Module):
             metadata={"path": str(path)},
             references=[_PROJECT_URL],
         )
+
+
+def _plausibly_electron(path: Path) -> bool:
+    """True when *path* could be a packaged Electron app, without opening it.
+
+    macOS ships the app as an ``.app`` bundle; Windows and Linux ship a single
+    executable file. An ordinary directory is neither, and that is the case we
+    must not hand to REA during a repository audit.
+
+    This also skips an *unpacked* install directory (``/opt/slack``,
+    ``C:\\Program Files\\Slack``), which is a real Electron app. That is the
+    price of staying quiet during a repository audit, and the way out is to
+    name the executable — or the directory — explicitly with
+    ``--opt config_audit.electron_fuses.path=...``, which bypasses this check.
+    """
+    if not path.exists():
+        return False
+    return path.suffix.lower() == ".app" or path.is_file()
 
 
 # --- report handling -------------------------------------------------------

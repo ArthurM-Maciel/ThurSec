@@ -38,6 +38,7 @@ from ...core.context import RunContext, coerce_timeout
 from ...core.finding import Finding, Severity
 from ...core.i18n import L
 from ...core.module import Category, Intensity, Module
+from ...core.target import looks_like_local_path
 
 _NVD_API_URL = "https://services.nvd.nist.gov/rest/json/cves/2.0"
 _NVD_DETAIL_URL = "https://nvd.nist.gov/vuln/detail/"
@@ -68,6 +69,12 @@ class CveLookup(Module):
 
     async def run(self, ctx: RunContext) -> list[Finding]:
         product, version = _resolve_product_version(ctx)
+
+        # Sem product explícito, o alvo é usado como palavra-chave na NVD. Num
+        # `thursec run .` isso virava busca por "." e devolvia CVEs de 1999 como
+        # CRITICAL — ruído na severidade mais alta, que enterra achado real.
+        if not ctx.options.get("product") and looks_like_local_path(ctx.target):
+            return []
 
         if not product:
             return [

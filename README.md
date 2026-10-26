@@ -102,6 +102,21 @@ thursec run host.lab.example -c config_audit --scope scope.yaml -o report.html
 A bare `thursec run <target>` (no `-m`/`-c`) runs **passive modules only**, so it
 can never touch an out-of-scope host by accident.
 
+The passive set covers two kinds of subject, and each module stays quiet when
+the target is not its kind: pointed at a repository, the domain and product
+modules (`recon.dns`, `recon.whois`, `recon.ct_subdomains`, `vuln.cve_lookup`)
+return nothing rather than looking up `.` as a hostname; pointed at a host, the
+file modules do the same.
+
+Scanning a repository finds the fake credentials in its own test fixtures and
+the bad-config examples in its docs. Those are true positives, so they are never
+skipped by default — a key really does get committed to `tests/` sometimes. Opt
+out per run when you know what is in there:
+
+```bash
+thursec run . --opt "exclude=tests/*,DEMO.md,docs/*"
+```
+
 Modules that call a public API accept a `timeout` option, and the NVD lookup
 accepts an optional API key — without one NIST rate-limits to 5 requests per
 window, which is the usual cause of a slow or timed-out `vuln.cve_lookup`:
@@ -158,6 +173,14 @@ the network, which is why it is PASSIVE. The subject is a local path:
 
 ```bash
 thursec run /Applications/Example.app -m config_audit.electron_fuses
+```
+
+Without an explicit path it only acts on an `.app` bundle or a single file, so
+a repository audit stays quiet. For an *unpacked* install directory (`/opt/slack`,
+`C:\Program Files\Slack`), name it explicitly:
+
+```bash
+thursec run . --opt config_audit.electron_fuses.path=/opt/slack
 ```
 
 ThurSec adds the judgement REA deliberately leaves out: REA reports fuse

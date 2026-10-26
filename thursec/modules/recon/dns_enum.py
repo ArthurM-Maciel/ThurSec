@@ -19,6 +19,7 @@ from ... import __version__
 from ...core.context import RunContext
 from ...core.finding import Finding, Severity
 from ...core.i18n import L, Lf
+from ...core.target import looks_like_local_path
 from ...core.module import Category, Intensity, Module
 
 _DOH_URL = "https://cloudflare-dns.com/dns-query"
@@ -51,6 +52,12 @@ class DnsEnum(Module):
         )
 
     async def run(self, ctx: RunContext) -> list[Finding]:
+        # Um caminho local não é domínio: num `thursec run .` sobre um
+        # repositório este módulo não tem sujeito. Silêncio é melhor que um
+        # achado sem sentido enterrando os achados reais.
+        if looks_like_local_path(ctx.target):
+            return []
+
         domain = _normalize_domain(ctx.target)
         findings: list[Finding] = []
         # Track per-type success so hygiene checks never fire on a failed lookup.

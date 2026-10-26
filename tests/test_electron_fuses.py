@@ -370,3 +370,33 @@ async def test_a_malformed_contract_is_a_finding_not_a_crash(tmp_path):
         findings = await ElectronFuses().run(_ctx(tmp_path, runner))
         assert len(findings) == 1, doc
         assert findings[0].severity == Severity.LOW, doc
+
+
+@pytest.mark.asyncio
+async def test_a_plain_directory_is_not_handed_to_rea(tmp_path):
+    """`thursec run .` num repositório não pode virar 'não consegui ler as fuses'."""
+    runner = _Runner(stdout=json.dumps(_report()))
+    repo = tmp_path / "meu-repo"
+    repo.mkdir()
+
+    ctx = RunContext(target=str(repo))
+    ctx.runner = runner
+    assert await ElectronFuses().run(ctx) == []
+    assert runner.calls == []
+
+
+@pytest.mark.asyncio
+async def test_an_app_bundle_or_a_binary_is_still_audited(tmp_path):
+    """O caso de uso real continua funcionando sem --opt path=."""
+    bundle = tmp_path / "Exemplo.app"
+    bundle.mkdir()
+    binario = tmp_path / "electron-bin"
+    binario.write_bytes(b"\x00")
+
+    for alvo in (bundle, binario):
+        runner = _Runner(stdout=json.dumps(_report()))
+        ctx = RunContext(target=str(alvo))
+        ctx.runner = runner
+        findings = await ElectronFuses().run(ctx)
+        assert findings, f"não auditou {alvo.name}"
+        assert runner.calls, f"não chamou o REA para {alvo.name}"
