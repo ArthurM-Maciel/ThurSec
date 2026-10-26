@@ -63,8 +63,13 @@ _RULES: list[tuple[str, re.Pattern[str], Severity]] = [
     ),
     (
         "AWS Secret Access Key",
+        # As aspas são opcionais: a forma canônica num .env
+        # (AWS_SECRET_ACCESS_KEY=...) e em YAML não usa aspas, e eram
+        # justamente os dois lugares mais prováveis de um vazamento real.
+        # Exige-se aspa OU separador (= :) para não casar prosa solta.
         re.compile(
-            r"(?i)aws(.{0,20})?(secret|private)(.{0,20})?['\"]([A-Za-z0-9/+=]{40})['\"]"
+            r"(?i)aws(?:.{0,20})?(?:secret|private)(?:.{0,20})?"
+            r"(?:['\"]|[:=]\s*['\"]?)([A-Za-z0-9/+=]{40})"
         ),
         Severity.CRITICAL,
     ),

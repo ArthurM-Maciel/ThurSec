@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`deps_secrets.secret_scan` missed an AWS secret key in a `.env`.** The rule
+  required the value to be quoted, so it matched `aws_secret_access_key = "..."`
+  in source but not `AWS_SECRET_ACCESS_KEY=...` in a `.env` file or
+  `aws_secret_access_key: ...` in YAML — the two most likely places a real key
+  leaks. Quotes are now optional, with a quote *or* a `=`/`:` separator still
+  required so prose mentioning "aws secret" cannot trigger it. Found by
+  scanning a fixture with planted credentials and comparing against ground
+  truth; no test covered the Secret Access Key rule before (only the Access Key
+  ID), so the gap was invisible to the suite.
+
 - **Version is now read from a single source.** `pyproject.toml` takes its
   version from `thursec/__init__.py` (hatch dynamic version), so `thursec
   --version` can no longer drift behind the changelog — it reported `0.1.0`

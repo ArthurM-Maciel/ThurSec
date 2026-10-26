@@ -94,3 +94,43 @@ async def test_missing_target_is_graceful(tmp_path):
     findings = await _run(str(tmp_path / "does_not_exist"))
     # No crash; an informational finding is fine.
     assert all(f.severity == Severity.INFO for f in findings)
+
+
+# --- AWS Secret Access Key: as formas reais de vazamento -------------------
+FAKE_AWS_SECRET = "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY"
+
+
+@pytest.mark.parametrize(
+    "linha",
+    [
+        pytest.param(f"AWS_SECRET_ACCESS_KEY={FAKE_AWS_SECRET}", id="env-sem-aspas"),
+        pytest.param(f"aws_secret_access_key: {FAKE_AWS_SECRET}", id="yaml-sem-aspas"),
+        pytest.param(f'aws_secret_access_key = "{FAKE_AWS_SECRET}"', id="codigo-aspas"),
+        pytest.param(
+            f'{{"aws_secret_access_key": "{FAKE_AWS_SECRET}"}}', id="json"
+        ),
+        pytest.param(f'setAwsSecret("{FAKE_AWS_SECRET}")', id="chamada-de-funcao"),
+    ],
+)
+async def test_aws_secret_is_found_in_every_common_leak_shape(tmp_path, linha):
+    """A regra exigia aspas e passava batido num .env — a forma mais provável."""
+    (tmp_path / "vazou.txt").write_text(linha + "\n")
+
+    findings = await SecretScan().run(RunContext(target=str(tmp_path)))
+    aws = [f for f in findings if "AWS Secret Access Key" in f.title]
+
+    assert len(aws) == 1, f"não detectado em: {linha}"
+    # O valor nunca aparece em claro no achado.
+    assert FAKE_AWS_SECRET not in aws[0].evidence
+    assert "*" in aws[0].evidence
+
+
+async def test_aws_prose_does_not_trigger_the_secret_rule(tmp_path):
+    """Precisão: menção a 'aws secret' sem valor não pode virar achado."""
+    (tmp_path / "notas.md").write_text(
+        "Revisar a politica de rotacao de aws secret neste trimestre.\n"
+        "aws region = us-east-2\n"
+    )
+
+    findings = await SecretScan().run(RunContext(target=str(tmp_path)))
+    assert [f for f in findings if "AWS Secret" in f.title] == []
