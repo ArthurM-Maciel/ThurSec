@@ -443,9 +443,9 @@ def render_landing_page(
     <h2>{L("Como identificar a próxima", "How to spot the next one")}</h2>
     <ul>
       <li><span class="flag">{L("Urgência inesperada.", "Unexpected urgency.")}</span> {L(
-        "\"Aja agora ou sua conta será bloqueada\" é uma pressão criada para "
+        '"Aja agora ou sua conta será bloqueada" é uma pressão criada para '
         "impedir você de pensar.",
-        "\"Act now or your account will be locked\" is pressure designed to stop "
+        '"Act now or your account will be locked" is pressure designed to stop '
         "you thinking.")}</li>
       <li><span class="flag">{L("Remetente e links incompatíveis.", "Mismatched sender &amp; links.")}</span> {L(
         "Passe o mouse sobre os links antes de clicar; verifique o domínio real, "
@@ -458,9 +458,9 @@ def render_landing_page(
         "Legitimate IT will never ask for your password by e-mail or on a linked "
         "page.")}</li>
       <li><span class="flag">{L("Saudações ou gramática estranhas.", "Odd greetings or grammar.")}</span> {L(
-        "Um genérico \"Prezado usuário\" e pequenos deslizes de linguagem são "
+        'Um genérico "Prezado usuário" e pequenos deslizes de linguagem são '
         "sinais comuns.",
-        "Generic \"Dear user\" and small language slips are common tells.")}</li>
+        'Generic "Dear user" and small language slips are common tells.')}</li>
       <li><span class="flag">{L("Anexos inesperados.", "Unexpected attachments.")}</span> {L(
         "Não abra arquivos que você não esperava, mesmo de nomes conhecidos.",
         "Do not open files you were not expecting, even from known names.")}</li>
@@ -537,12 +537,12 @@ def render_email_template(
 {L("AVISO DE SIMULAÇÃO — TREINAMENTO DE CONSCIENTIZAÇÃO EM SEGURANÇA", "SIMULATION NOTICE — SECURITY AWARENESS TRAINING")}
 {Lf(
     "Esta mensagem é um e-mail de phishing SIMULADO, parte do exercício "
-    "autorizado de conscientização \"{campaign}\". Ela não foi enviada por uma "
+    'autorizado de conscientização "{campaign}". Ela não foi enviada por uma '
     "central de atendimento real e não pede nada verdadeiro. Autorizado por: "
     "{by}; data de aprovação: {on}. O link leva apenas a uma página educativa. "
     "Nenhuma credencial é coletada.",
     "This message is a SIMULATED phishing e-mail, part of the authorized "
-    "\"{campaign}\" awareness exercise. It was not sent by a real service "
+    '"{campaign}" awareness exercise. It was not sent by a real service '
     "desk and asks for nothing real. Authorized by: {by}; approval date: {on}. "
     "The link leads only to an educational page. No credentials are collected.",
     campaign=campaign_name, by=by, on=on,
