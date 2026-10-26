@@ -16,10 +16,13 @@ import socket
 import ssl
 from datetime import datetime, timezone
 
+from ... import __version__
 from ...core.context import RunContext
 from ...core.finding import Finding, Severity
 from ...core.i18n import L, Lf
 from ...core.module import Category, Intensity, Module
+
+_USER_AGENT = f"ThurSec/{__version__}"
 
 # header -> (severity if missing, recommendation PT, recommendation EN)
 _SECURITY_HEADERS: dict[str, tuple[Severity, str, str]] = {
@@ -226,7 +229,7 @@ def _fetch_headers(host: str, port: int) -> dict[str, str]:
 
     conn = http.client.HTTPSConnection(host, port, timeout=10)
     try:
-        conn.request("HEAD", "/", headers={"User-Agent": "ThurSec/0.1"})
+        conn.request("HEAD", "/", headers={"User-Agent": _USER_AGENT})
         resp = conn.getresponse()
         return {k: v for k, v in resp.getheaders()}
     finally:

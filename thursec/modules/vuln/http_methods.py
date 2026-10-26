@@ -21,11 +21,14 @@ from __future__ import annotations
 import asyncio
 from urllib.parse import urlparse
 
+from ... import __version__
 from ...core.context import RunContext
 from ...core.finding import Finding, Severity
 from ...core.i18n import L
 from ...core.module import Category, Intensity, Module
 from ...core.target import TargetError, validate_target
+
+_USER_AGENT = f"ThurSec/{__version__}"
 
 # Methods that, when advertised in Allow, warrant a finding. Mapped to
 # (severity, recommendation). TRACE/TRACK enable Cross-Site Tracing; the
@@ -337,7 +340,7 @@ class HttpMethods(Module):
         else:
             conn = http.client.HTTPConnection(host, port, timeout=timeout)
         try:
-            conn.request("OPTIONS", "/", headers={"User-Agent": "ThurSec/0.1"})
+            conn.request("OPTIONS", "/", headers={"User-Agent": _USER_AGENT})
             resp = conn.getresponse()
             # Drain the (usually empty) body so the connection closes cleanly.
             resp.read()

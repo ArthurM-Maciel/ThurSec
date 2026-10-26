@@ -29,18 +29,23 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import urllib.parse
 import urllib.request
 
-from ...core.context import RunContext
+from ... import __version__
+from ...core.context import RunContext, coerce_timeout
 from ...core.finding import Finding, Severity
 from ...core.i18n import L
 from ...core.module import Category, Intensity, Module
 
 _NVD_API_URL = "https://services.nvd.nist.gov/rest/json/cves/2.0"
 _NVD_DETAIL_URL = "https://nvd.nist.gov/vuln/detail/"
-_USER_AGENT = "ThurSec/0.1"
-_TIMEOUT = 20
+_USER_AGENT = f"ThurSec/{__version__}"
+# A NVD pública responde devagar sob limite de taxa; 20s virava timeout
+# rotineiro. Com uma API key (options['api_key'] ou NVD_API_KEY) o limite
+# sobe de 5 para 50 requisições por janela.
+_DEFAULT_TIMEOUT = 30.0
 # Cap how many CVE findings we emit so a broad keyword can't flood a run.
 _MAX_FINDINGS = 50
 
@@ -95,8 +100,11 @@ class CveLookup(Module):
                 )
             ]
 
+        timeout = coerce_timeout(ctx.options.get("timeout"), _DEFAULT_TIMEOUT)
+        api_key = _resolve_api_key(ctx)
+
         try:
-            doc = await asyncio.to_thread(self._query_nvd, product)
+            doc = await asyncio.to_thread(self._query_nvd, product, timeout, api_key)
         except Exception as e:
             return [
                 ctx.finding(
@@ -191,7 +199,12 @@ class CveLookup(Module):
         return findings
 
     # --- isolable NVD HTTP layer (monkeypatched in tests) ------------------
-    def _query_nvd(self, product: str) -> dict:
+    def _query_nvd(
+        self,
+        product: str,
+        timeout: float = _DEFAULT_TIMEOUT,
+        api_key: str = "",
+    ) -> dict:
         """Query NVD 2.0 by keyword and return the parsed JSON document.
 
         Isolated so tests replace it with canned data — no network. Blocking;
@@ -199,16 +212,28 @@ class CveLookup(Module):
         """
         query = urllib.parse.urlencode({"keywordSearch": product})
         url = f"{_NVD_API_URL}?{query}"
-        req = urllib.request.Request(
-            url,
-            headers={"User-Agent": _USER_AGENT, "Accept": "application/json"},
-        )
-        with urllib.request.urlopen(req, timeout=_TIMEOUT) as resp:
+        headers = {"User-Agent": _USER_AGENT, "Accept": "application/json"}
+        if api_key:
+            headers["apiKey"] = api_key
+        req = urllib.request.Request(url, headers=headers)
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
             raw = resp.read().decode("utf-8", errors="replace")
         return json.loads(raw) if raw else {}
 
 
 # --- input resolution ------------------------------------------------------
+def _resolve_api_key(ctx: RunContext) -> str:
+    """Optional NVD API key, from options first then the environment.
+
+    An explicit ``--opt api_key=`` wins over an exported ``NVD_API_KEY``, so an
+    operator can force an anonymous query without unsetting their environment.
+    Never logged or reported — it only ever reaches the request header.
+    """
+    if "api_key" in ctx.options:
+        return str(ctx.options.get("api_key") or "").strip()
+    return str(os.environ.get("NVD_API_KEY") or "").strip()
+
+
 def _resolve_product_version(ctx: RunContext) -> tuple[str, str]:
     """Work out (product, version) from options first, then the target string."""
     opts = ctx.options or {}

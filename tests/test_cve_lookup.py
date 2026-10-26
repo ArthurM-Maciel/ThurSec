@@ -10,6 +10,7 @@ import pytest
 from thursec.core.context import RunContext
 from thursec.core.finding import Severity
 from thursec.core.i18n import get_lang, set_lang
+from thursec.modules.vuln import cve_lookup
 from thursec.modules.vuln.cve_lookup import (
     CveLookup,
     _base_score,
@@ -99,7 +100,7 @@ _NVD_DOC = {
 
 
 def _fake_nvd(doc):
-    def fake(self, product):
+    def fake(self, product, *_args, **_kw):
         return doc
 
     return fake
@@ -175,7 +176,7 @@ async def test_no_product_emits_help(monkeypatch):
 # --- error path (network/parse failure handled, never raised) --------------
 @pytest.mark.asyncio
 async def test_nvd_error_is_handled(monkeypatch):
-    def boom(self, product):
+    def boom(self, product, *_args, **_kw):
         raise ConnectionError("nvd unreachable")
 
     monkeypatch.setattr(CveLookup, "_query_nvd", boom)
@@ -223,3 +224,79 @@ def test_confidence_potential_without_version_data():
     cve = {"configurations": []}
     assert _confidence_for(cve, "1.0.0") == "potential"
     assert _confidence_for(cve, "") == "potential"
+
+
+# --- timeout e API key configuráveis ---------------------------------------
+@pytest.mark.asyncio
+async def test_timeout_and_api_key_reach_the_http_layer(monkeypatch):
+    """A opção 'timeout' e a API key (options ou env) chegam ao _query_nvd."""
+    seen = {}
+
+    def spy(self, product, timeout=None, api_key=None):
+        seen.update(product=product, timeout=timeout, api_key=api_key)
+        return _NVD_DOC
+
+    monkeypatch.setattr(CveLookup, "_query_nvd", spy)
+    monkeypatch.setenv("NVD_API_KEY", "from-env")
+
+    await CveLookup().run(RunContext(target="nginx", options={"timeout": 5}))
+    assert seen["timeout"] == 5.0
+    assert seen["api_key"] == "from-env"
+
+    # options vence o ambiente.
+    await CveLookup().run(RunContext(target="nginx", options={"api_key": "from-opts"}))
+    assert seen["api_key"] == "from-opts"
+
+
+@pytest.mark.asyncio
+async def test_api_key_becomes_a_request_header(monkeypatch):
+    """Sem key não há header apiKey; com key, ele vai na requisição."""
+    captured = []
+
+    class _Resp:
+        def read(self):
+            return b"{}"
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+    def fake_urlopen(req, timeout=None):
+        captured.append((dict(req.headers), timeout))
+        return _Resp()
+
+    monkeypatch.setattr(cve_lookup.urllib.request, "urlopen", fake_urlopen)
+
+    CveLookup()._query_nvd("nginx", timeout=7.0)
+    headers, timeout = captured[-1]
+    assert timeout == 7.0
+    assert "Apikey" not in headers  # urllib capitaliza as chaves
+
+    CveLookup()._query_nvd("nginx", timeout=7.0, api_key="k")
+    headers, _ = captured[-1]
+    assert headers["Apikey"] == "k"
+
+
+# --- opções malformadas e override explícito da key ------------------------
+@pytest.mark.asyncio
+async def test_bad_timeout_option_does_not_become_a_network_finding(monkeypatch):
+    """Um --opt timeout=rapido não pode virar achado de 'não consegui consultar'."""
+    monkeypatch.setattr(CveLookup, "_query_nvd", _fake_nvd(_NVD_DOC))
+    findings = await CveLookup().run(
+        RunContext(target="nginx", options={"timeout": "rapido"})
+    )
+    assert all("Could not query" not in f.title and "Não foi possível" not in f.title
+               for f in findings)
+
+
+@pytest.mark.asyncio
+async def test_explicit_empty_api_key_overrides_the_environment(monkeypatch):
+    """--opt api_key= força consulta anônima mesmo com NVD_API_KEY exportada."""
+    monkeypatch.setenv("NVD_API_KEY", "from-env")
+    assert cve_lookup._resolve_api_key(RunContext(target="nginx")) == "from-env"
+    assert (
+        cve_lookup._resolve_api_key(RunContext(target="nginx", options={"api_key": ""}))
+        == ""
+    )

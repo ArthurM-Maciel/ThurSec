@@ -29,11 +29,14 @@ from __future__ import annotations
 import asyncio
 from urllib.parse import urlparse
 
+from ... import __version__
 from ...core.context import RunContext
 from ...core.finding import Finding, Severity
 from ...core.i18n import L, Lf
 from ...core.module import Category, Intensity, Module
 from ...core.target import TargetError, validate_target
+
+_USER_AGENT = f"ThurSec/{__version__}"
 
 _DEFAULT_TIMEOUT = 10.0
 
@@ -289,7 +292,7 @@ class CookieAudit(Module):
         else:
             conn = http.client.HTTPConnection(host, port, timeout=timeout)
         try:
-            conn.request("GET", "/", headers={"User-Agent": "ThurSec/0.1"})
+            conn.request("GET", "/", headers={"User-Agent": _USER_AGENT})
             resp = conn.getresponse()
             # Drain the body so the connection closes cleanly.
             resp.read()

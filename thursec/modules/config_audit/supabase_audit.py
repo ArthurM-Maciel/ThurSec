@@ -42,12 +42,13 @@ import urllib.error
 import urllib.request
 from dataclasses import dataclass
 
+from ... import __version__
 from ...core.context import RunContext
 from ...core.finding import Finding, Severity
 from ...core.i18n import L, Lf
 from ...core.module import Category, Intensity, Module
 
-_USER_AGENT = "ThurSec/0.1"
+_USER_AGENT = f"ThurSec/{__version__}"
 _TIMEOUT = 15
 # Cap how many tables we probe so a huge schema can't blow up the run.
 _MAX_TABLES = 40

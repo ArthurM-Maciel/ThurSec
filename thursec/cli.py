@@ -17,7 +17,7 @@ from typing import Any
 from . import __version__
 from .core.engine import Engine, Registry
 from .core.i18n import L, Lf, SUPPORTED_LANGS, init_lang_from_env, set_lang
-from .core.module import Category, Intensity
+from .core.module import Category, Intensity, Module
 from .core.dashboard import render_dashboard
 from .core.report import Report
 from .core.scope import Scope, ScopeError
@@ -101,12 +101,17 @@ def _build_parser() -> argparse.ArgumentParser:
             "vence para uma chave repetida). Exposta aos módulos como "
             "ctx.options. O valor é convertido: 'true'/'false' -> bool, "
             "inteiro -> int, decimal -> float, senão string. Ex.: --opt "
-            "max_rps=50 --opt allow_intrusive=true --opt product=nginx.",
+            "max_rps=50 --opt allow_intrusive=true --opt product=nginx. "
+            "Uma chave vale para todos os módulos da execução; prefixe com o "
+            "id de um módulo para restringi-la a ele: "
+            "--opt vuln.cve_lookup.timeout=60.",
             "Pass a module option as KEY=VALUE (repeatable; last wins for a "
             "repeated key). Surfaced to modules as ctx.options. The value is "
             "coerced: 'true'/'false' -> bool, an integer -> int, a decimal -> "
             "float, otherwise a string. E.g. --opt max_rps=50 --opt "
-            "allow_intrusive=true --opt product=nginx.",
+            "allow_intrusive=true --opt product=nginx. A key applies to every "
+            "module in the run; prefix it with a module id to scope it to that "
+            "module alone: --opt vuln.cve_lookup.timeout=60.",
         ),
     )
     run.add_argument(
@@ -313,6 +318,39 @@ def _parse_opts(items: list[str]) -> dict[str, Any]:
     return out
 
 
+def _reject_unknown_opt_scopes(options: dict[str, Any], modules: list[Module]) -> None:
+    """Fail on a module-scoped ``--opt`` key not addressed to a selected module.
+
+    A dotted key is scoped to a module id, and the engine drops one addressed to
+    a module that is not running. A *typo* in that prefix, or a key aimed at a
+    module this run does not include, would be dropped the same silent way — the
+    operator would see a normal run with default values and no sign their option
+    was ignored — so either is a usage error, like a missing ``=``.
+
+    Validating against the *selected* modules rather than the whole registry is
+    what makes the second case an error: ``-m recon.dns --opt
+    vuln.cve_lookup.timeout=60`` is a real mistake, and the registry would have
+    waved it through.
+    """
+    known = {m.id for m in modules}
+    for key in options:
+        prefix, dot, name = key.rpartition(".")
+        if not dot or not name or prefix in known:
+            continue
+        raise ValueError(
+            Lf(
+                "--opt {key!r} inválido: {prefix!r} não é um módulo desta "
+                "execução. Verifique o id (veja 'thursec list') e se ele está "
+                "entre os módulos selecionados.",
+                "invalid --opt {key!r}: {prefix!r} is not a module in this run. "
+                "Check the id (see 'thursec list') and that it is among the "
+                "selected modules.",
+                key=key,
+                prefix=prefix,
+            )
+        )
+
+
 def _resolve_intrusive_confirmation(
     modules: list, args: argparse.Namespace
 ) -> dict[str, object]:
@@ -376,6 +414,7 @@ async def _cmd_run(registry: Registry, args: argparse.Namespace) -> int:
     options = _resolve_intrusive_confirmation(modules, args)
     try:
         options.update(_parse_opts(args.opt))
+        _reject_unknown_opt_scopes(options, modules)
     except ValueError as e:
         print(Lf("erro: {e}", "error: {e}", e=e), file=sys.stderr)
         return 2

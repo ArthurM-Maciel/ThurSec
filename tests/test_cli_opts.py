@@ -134,3 +134,45 @@ def test_run_without_opts_still_works(monkeypatch):
 
     rc = cli.main(["run", "echo.example", "-m", "test.echo_opts"])
     assert rc == 0
+
+
+# --- prefixo de módulo desconhecido em --opt -------------------------------
+def _modules_with(*ids):
+    mods = []
+    for mid in ids:
+        cls = type(
+            f"_M{abs(hash(mid))}",
+            (Module,),
+            {
+                "id": mid,
+                "category": Category.RECON,
+                "intensity": Intensity.PASSIVE,
+                "run": lambda self, ctx: [],
+            },
+        )
+        mods.append(cls())
+    return mods
+
+
+def test_unknown_opt_scope_is_a_usage_error():
+    """Um prefixo que não nomeia módulo falha alto, em vez de sumir calado."""
+    mods = _modules_with("recon.dns")
+
+    with pytest.raises(ValueError, match="recon.dns_enum"):
+        cli._reject_unknown_opt_scopes({"recon.dns_enum.timeout": 60}, mods)
+
+
+def test_known_scope_and_bare_keys_pass():
+    mods = _modules_with("recon.dns", "vuln.cve_lookup")
+
+    cli._reject_unknown_opt_scopes(
+        {"timeout": 30, "recon.dns.timeout": 60, "vuln.cve_lookup.api_key": "k"}, mods
+    )
+
+
+def test_opt_scoped_to_a_module_not_in_this_run_is_rejected():
+    """-m recon.dns --opt vuln.cve_lookup.timeout=60 é engano, não configuração."""
+    mods = _modules_with("recon.dns")
+
+    with pytest.raises(ValueError, match="vuln.cve_lookup"):
+        cli._reject_unknown_opt_scopes({"vuln.cve_lookup.timeout": 60}, mods)

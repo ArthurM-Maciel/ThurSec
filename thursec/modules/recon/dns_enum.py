@@ -15,6 +15,7 @@ import json
 import urllib.parse
 import urllib.request
 
+from ... import __version__
 from ...core.context import RunContext
 from ...core.finding import Finding, Severity
 from ...core.i18n import L, Lf
@@ -22,7 +23,7 @@ from ...core.module import Category, Intensity, Module
 
 _DOH_URL = "https://cloudflare-dns.com/dns-query"
 _ACCEPT = "application/dns-json"
-_USER_AGENT = "ThurSec/0.1"
+_USER_AGENT = f"ThurSec/{__version__}"
 _TIMEOUT = 10
 # Record types we enumerate for the apex domain, in report order.
 _RECORD_TYPES = ("A", "AAAA", "MX", "NS", "TXT", "CNAME")

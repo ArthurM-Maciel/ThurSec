@@ -1,6 +1,6 @@
 [project]
 name = "thursec"
-version = "0.1.0"
+dynamic = ["version"]
 description = "ThurSec — modular security assessment toolkit for authorized engagements."
 readme = "README.md"
 requires-python = ">=3.11"
@@ -19,6 +19,10 @@ dev = ["thursec[tui]", "pytest>=8.0", "pytest-asyncio>=0.23"]
 [project.scripts]
 thursec = "thursec.cli:main"
 thursec-tui = "thursec.tui.app:main"
+
+# Versão vem de thursec/__init__.py — uma fonte só, sem risco de divergir.
+[tool.hatch.version]
+path = "thursec/__init__.py"
 
 [build-system]
 requires = ["hatchling"]

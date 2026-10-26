@@ -1,7 +1,7 @@
 import pytest
 
 from thursec.core import i18n
-from thursec.core.context import RunContext
+from thursec.core.context import RunContext, coerce_timeout, scoped_options
 from thursec.core.engine import Engine, Registry
 from thursec.core.finding import Finding, Severity
 from thursec.core.module import Category, Intensity, Module
@@ -164,3 +164,69 @@ async def test_active_module_runs_in_scope_without_confirmation():
     eng = Engine(reg, scope=_scope())
     res = await eng.run_module(reg.get("test.active"), "x.example")
     assert res.ok and len(res.findings) == 1
+
+
+# --- opções com escopo por módulo ------------------------------------------
+def test_scoped_options_module_prefix_wins_over_bare():
+    opts = {"timeout": 60, "vuln.cve_lookup.timeout": 120, "product": "nginx"}
+
+    assert scoped_options(opts, "vuln.cve_lookup") == {
+        "timeout": 120,
+        "product": "nginx",
+    }
+    # Outro módulo continua com o valor nu, sem enxergar a chave alheia.
+    assert scoped_options(opts, "vuln.nuclei") == {"timeout": 60, "product": "nginx"}
+
+
+def test_scoped_options_does_not_leak_another_modules_key():
+    """Uma chave de outro módulo é descartada, não rebaixada para nua."""
+    opts = {"recon.nmap.timeout": 30}
+
+    assert scoped_options(opts, "vuln.nuclei") == {}
+    assert scoped_options(opts, "recon.nmap") == {"timeout": 30}
+
+
+def test_scoped_options_passes_through_an_empty_or_flat_dict():
+    assert scoped_options({}, "recon.nmap") == {}
+    assert scoped_options({"max_rps": 10}, "resilience.load_test") == {"max_rps": 10}
+
+
+@pytest.mark.asyncio
+async def test_engine_gives_each_module_its_own_option_view():
+    """O caso que motivou a mudança: -c vuln --opt timeout não corta o nuclei."""
+    seen: dict[str, object] = {}
+
+    class _Fast(Module):
+        id = "vuln.fast"
+        category = Category.VULN
+        intensity = Intensity.PASSIVE
+
+        async def run(self, ctx):
+            seen[self.id] = ctx.options.get("timeout")
+            return []
+
+    class _Slow(_Fast):
+        id = "vuln.slow"
+
+    reg = Registry()
+    reg.register(_Fast())
+    reg.register(_Slow())
+    engine = Engine(reg, options={"timeout": 600, "vuln.fast.timeout": 60})
+    for mid in ("vuln.fast", "vuln.slow"):
+        await engine.run_module(reg.get(mid), "example.com")
+
+    assert seen == {"vuln.fast": 60, "vuln.slow": 600}
+
+
+# --- coerce_timeout compartilhado ------------------------------------------
+def test_coerce_timeout_falls_back_on_nonsense():
+    assert coerce_timeout(5, 30.0) == 5.0
+    assert coerce_timeout("7.5", 30.0) == 7.5
+    for bad in ("rapido", None, 0, -1, "", [], {}):
+        assert coerce_timeout(bad, 30.0) == 30.0
+
+
+def test_coerce_timeout_rejects_booleans():
+    """--opt timeout=true vira True no CLI; float(True) daria 1s de timeout."""
+    assert coerce_timeout(True, 30.0) == 30.0
+    assert coerce_timeout(False, 30.0) == 30.0

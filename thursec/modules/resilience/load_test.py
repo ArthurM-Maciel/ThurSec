@@ -33,11 +33,15 @@ import asyncio
 from collections import deque
 from urllib.parse import urlparse
 
-from ...core.context import RunContext
+from ... import __version__
+from ...core.context import RunContext, coerce_timeout
+
 from ...core.finding import Finding, Severity
 from ...core.i18n import L, Lf
 from ...core.module import Category, Intensity, Module
 from ...core.target import TargetError, validate_target
+
+_USER_AGENT = f"ThurSec/{__version__}"
 
 # --- HARD, NON-REMOVABLE SAFETY CAPS ---------------------------------------
 # These bound the blast radius even against an authorized, in-scope target.
@@ -239,7 +243,7 @@ class LoadTest(Module):
             duration = _DEFAULT_DURATION
 
         scheme, host, port, path = _parse_target(ctx.target, ctx.options)
-        timeout = _coerce_timeout(ctx.options.get("timeout"))
+        timeout = coerce_timeout(ctx.options.get("timeout"), _DEFAULT_TIMEOUT)
 
         # 4) Generate the bounded load and collect metrics.
         stats = await self._generate_load(
@@ -514,7 +518,7 @@ class LoadTest(Module):
             conn = http.client.HTTPConnection(host, port, timeout=timeout)
         t0 = time.monotonic()
         try:
-            conn.request("GET", path or "/", headers={"User-Agent": "ThurSec/0.1"})
+            conn.request("GET", path or "/", headers={"User-Agent": _USER_AGENT})
             resp = conn.getresponse()
             resp.read()  # drain so the connection closes cleanly
             return resp.status, time.monotonic() - t0
@@ -563,14 +567,6 @@ def _coerce_positive_int(value: object) -> int | None:
     except (TypeError, ValueError):
         return None
     return ivalue if ivalue >= 1 else None
-
-
-def _coerce_timeout(value: object) -> float:
-    try:
-        t = float(value)  # type: ignore[arg-type]
-        return t if t > 0 else _DEFAULT_TIMEOUT
-    except (TypeError, ValueError):
-        return _DEFAULT_TIMEOUT
 
 
 def _percentiles(latencies: list[float]) -> tuple[float, float, float]:

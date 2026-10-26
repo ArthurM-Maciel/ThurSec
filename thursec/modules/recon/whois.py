@@ -19,13 +19,14 @@ import json
 import urllib.request
 from datetime import datetime, timezone
 
+from ... import __version__
 from ...core.context import RunContext
 from ...core.finding import Finding, Severity
 from ...core.i18n import L, Lf
 from ...core.module import Category, Intensity, Module
 
 _RDAP_URL = "https://rdap.org/domain/{domain}"
-_USER_AGENT = "ThurSec/0.1"
+_USER_AGENT = f"ThurSec/{__version__}"
 _TIMEOUT = 15
 # Warn when a domain is within this many days of expiring.
 _EXPIRY_WARN_DAYS = 30

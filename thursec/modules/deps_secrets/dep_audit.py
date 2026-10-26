@@ -23,6 +23,7 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
+from ... import __version__
 from ...core.context import RunContext
 from ...core.finding import Finding, Severity
 from ...core.i18n import L, Lf
@@ -36,7 +37,7 @@ except ModuleNotFoundError:  # pragma: no cover - defensive for <3.11.
 _OSV_QUERY_URL = "https://api.osv.dev/v1/query"
 _OSV_ECOSYSTEM = "PyPI"
 _OSV_VULN_URL = "https://osv.dev/vulnerability/"
-_USER_AGENT = "ThurSec/0.1"
+_USER_AGENT = f"ThurSec/{__version__}"
 _TIMEOUT = 20
 # Cap how many distinct packages we query so a huge lockfile can't blow up a run.
 _MAX_PACKAGES = 200

@@ -13,7 +13,7 @@ import pkgutil
 import time
 from typing import Any
 
-from .context import RunContext
+from .context import RunContext, scoped_options
 from .i18n import Lf
 from .module import Category, Intensity, Module, ModuleResult
 from .scope import Scope, ScopeError
@@ -130,7 +130,11 @@ class Engine:
                 ),
             )
 
-        ctx = RunContext(target=target, scope=self.scope, options=self.options)
+        ctx = RunContext(
+            target=target,
+            scope=self.scope,
+            options=scoped_options(self.options, module.id),
+        )
         started = time.monotonic()
         try:
             findings = await module.run(ctx)

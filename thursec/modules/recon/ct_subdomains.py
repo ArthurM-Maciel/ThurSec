@@ -10,16 +10,30 @@ from __future__ import annotations
 
 import asyncio
 import json
+import time
+import urllib.error
 import urllib.request
 
-from ...core.context import RunContext
+from ... import __version__
+from ...core.context import RunContext, coerce_timeout
 from ...core.finding import Finding, Severity
 from ...core.i18n import L, Lf
 from ...core.module import Category, Intensity, Module
 
 _CRT_SH_URL = "https://crt.sh/?q=%25.{domain}&output=json"
-_USER_AGENT = "ThurSec/0.1"
-_TIMEOUT = 15
+_USER_AGENT = f"ThurSec/{__version__}"
+# crt.sh agrega todos os logs públicos de CT e costuma levar dezenas de
+# segundos em domínios grandes; um teto curto demais vira timeout rotineiro.
+_DEFAULT_TIMEOUT = 45.0
+# O crt.sh devolve 502/503 intermitentes mesmo quando está no ar — medido em
+# ~2 de 3 requisições, e o 502 volta em menos de 1s. Sem repetir, isso vira
+# um falso "não foi possível consultar" na maioria das execuções.
+_MAX_ATTEMPTS = 3
+_RETRY_STATUSES = frozenset({429, 500, 502, 503, 504})
+_RETRY_DELAY = 2.0
+_MAX_RETRY_DELAY = 30.0
+# Falhas que melhoram repetindo. gaierror (NXDOMAIN) e erro de TLS ficam de fora.
+_TRANSIENT_ERRORS = (TimeoutError, ConnectionError)
 # Above this many subdomains we nudge the operator about attack surface.
 _LARGE_SURFACE = 50
 # How many names to show inline in the finding's evidence.
@@ -49,8 +63,10 @@ class CtSubdomains(Module):
     async def run(self, ctx: RunContext) -> list[Finding]:
         domain = _normalize_domain(ctx.target)
 
+        timeout = coerce_timeout(ctx.options.get("timeout"), _DEFAULT_TIMEOUT)
+
         try:
-            raw = await asyncio.to_thread(self.fetch, domain)
+            raw = await asyncio.to_thread(self.fetch, domain, timeout)
             entries = json.loads(raw)
         except Exception as e:
             return [
@@ -125,15 +141,66 @@ class CtSubdomains(Module):
         ]
 
     # --- isolable fetch (monkeypatched in tests) ---------------------------
-    def fetch(self, domain: str) -> str:
+    def fetch(self, domain: str, timeout: float = _DEFAULT_TIMEOUT) -> str:
         """Fetch the raw crt.sh JSON response for ``domain``. Blocking on purpose."""
         url = _CRT_SH_URL.format(domain=domain)
         req = urllib.request.Request(url, headers={"User-Agent": _USER_AGENT})
-        with urllib.request.urlopen(req, timeout=_TIMEOUT) as resp:
-            return resp.read().decode("utf-8", errors="replace")
+        # `timeout` é o orçamento TOTAL do operador, não por tentativa: com
+        # repetição, um por-tentativa multiplicaria a espera por _MAX_ATTEMPTS
+        # e travaria a execução inteira (os módulos rodam em sequência).
+        deadline = time.monotonic() + timeout
+        last: Exception | None = None
+
+        for attempt in range(_MAX_ATTEMPTS):
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                break
+            try:
+                with urllib.request.urlopen(req, timeout=remaining) as resp:
+                    return resp.read().decode("utf-8", errors="replace")
+            except urllib.error.HTTPError as e:
+                # HTTPError é file-like e segura um socket: fechar antes de dormir.
+                e.close()
+                last = e
+                if e.code not in _RETRY_STATUSES:
+                    raise
+                delay = _retry_delay(e)
+            except urllib.error.URLError as e:
+                # urllib embrulha o erro de conexão: só repetir se o motivo for
+                # transitório. NXDOMAIN (gaierror) e falha de TLS não melhoram
+                # repetindo — repeti-las só atrasa o mesmo achado.
+                if not isinstance(e.reason, _TRANSIENT_ERRORS):
+                    raise
+                last = e
+                delay = _RETRY_DELAY
+            except _TRANSIENT_ERRORS as e:
+                # Timeout de leitura sobe direto, sem embrulho.
+                last = e
+                delay = _RETRY_DELAY
+
+            if attempt + 1 >= _MAX_ATTEMPTS:
+                break
+            if deadline - time.monotonic() <= delay:
+                break  # dormir estouraria o orçamento; desiste agora.
+            time.sleep(delay)
+
+        if last is None:  # orçamento esgotado antes da primeira tentativa
+            raise TimeoutError(f"crt.sh lookup budget of {timeout}s exhausted")
+        raise last
 
 
 # --- helpers ---------------------------------------------------------------
+def _retry_delay(error: urllib.error.HTTPError) -> float:
+    """Pausa antes da segunda tentativa, respeitando Retry-After num 429."""
+    try:
+        after = float(error.headers.get("Retry-After", ""))
+    except (AttributeError, TypeError, ValueError):
+        return _RETRY_DELAY
+    # Um Retry-After absurdo não deve travar a execução inteira.
+    return max(_RETRY_DELAY, min(after, _MAX_RETRY_DELAY))
+
+
+
 def _normalize_domain(target: str) -> str:
     """Reduce a target (possibly a URL) to a bare, lowercase domain."""
     t = target.strip().lower()
