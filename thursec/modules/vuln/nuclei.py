@@ -22,6 +22,7 @@ gate applies before it ever runs.
 from __future__ import annotations
 
 import json
+import shlex
 
 from ...core.context import RunContext, coerce_timeout
 from ...core.finding import Finding, Severity
@@ -118,7 +119,12 @@ class NucleiScan(Module):
             args += ["-exclude-tags", _DANGEROUS_TAGS]
 
         # Let the operator append extra nuclei flags (e.g. ["-tags", "cve"]).
+        # A string is accepted too and split like a command line, because --opt
+        # can only ever deliver a string: taking a list alone made the option
+        # unreachable from the CLI and silently dropped there.
         extra = ctx.options.get("extra_args")
+        if isinstance(extra, str):
+            extra = shlex.split(extra)
         if isinstance(extra, (list, tuple)):
             args += [str(a) for a in extra]
 

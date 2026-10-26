@@ -223,3 +223,18 @@ async def test_nuclei_rejects_unsafe_target_without_invoking_binary(bad):
     assert runner.calls == []  # binary never invoked
     assert len(findings) == 1
     assert "Refusing to scan" in findings[0].title
+
+
+async def test_extra_args_accepts_a_string_from_the_cli():
+    """--opt só entrega string; aceitar apenas lista tornava a opção inalcançável."""
+    runner = _FakeRunner(_result(stdout=""))
+    await NucleiScan().run(_ctx(runner, extra_args="-tags tech -rate-limit 10"))
+
+    assert runner.calls[0][-4:] == ["-tags", "tech", "-rate-limit", "10"]
+
+
+async def test_extra_args_ignores_a_type_it_cannot_use():
+    runner = _FakeRunner(_result(stdout=""))
+    await NucleiScan().run(_ctx(runner, extra_args=42))
+
+    assert "42" not in runner.calls[0]

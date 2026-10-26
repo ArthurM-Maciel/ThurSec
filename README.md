@@ -134,8 +134,16 @@ finding — never a crash — when it is absent:
 | Module | Needs | Install |
 | --- | --- | --- |
 | `recon.nmap` | `nmap` | `brew install nmap` / `apt install nmap` |
-| `vuln.nuclei` | `nuclei` | [projectdiscovery/nuclei](https://github.com/projectdiscovery/nuclei) |
+| `vuln.nuclei` | `nuclei` | `brew install nuclei`, or [projectdiscovery/nuclei](https://github.com/projectdiscovery/nuclei) |
 | `config_audit.electron_fuses` | `rea` | `npm i -g rea-agents` (Node `^22.23.4`, `^24.22.1` or `>=26.12.1`) |
+
+`vuln.nuclei` runs nuclei's full template set by default, which can take many
+minutes. Narrow it with `extra_args`:
+
+```bash
+thursec run http://alvo -m vuln.nuclei --scope scope.yaml \
+  --opt "extra_args=-tags tech -rate-limit 50"
+```
 
 `recon.ct_subdomains` queries crt.sh and falls back to CertSpotter, because
 crt.sh returns an intermittent 502 even while healthy; both are public,
