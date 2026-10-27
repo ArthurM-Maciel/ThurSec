@@ -112,3 +112,74 @@ def test_faixa_dentro_de_faixa_autorizada(alvo, entrada, autorizado):
     from thursec.core.scope import _match
 
     assert _match(alvo, entrada) is autorizado
+
+
+# --- fronteira de autorização, adversarial ---------------------------------
+# O gate é o código de maior consequência da ferramenta: um furo aqui faz o
+# ThurSec varrer o que ninguém autorizou. Estes casos foram levantados à mão
+# contra um escopo real e ficam aqui para não regredirem.
+_ESCOPO_FRONTEIRA = """
+engagement: "fronteira"
+authorized_by: "x@example.com"
+targets:
+  - "interno.example.com"
+  - "*.lab.example.com"
+  - "10.0.0.0/24"
+"""
+
+
+@_pytest.fixture
+def escopo_fronteira(tmp_path):
+    caminho = tmp_path / "s.yaml"
+    caminho.write_text(_ESCOPO_FRONTEIRA)
+    from thursec.core.scope import Scope
+
+    return Scope.from_file(str(caminho))
+
+
+@_pytest.mark.parametrize(
+    "alvo",
+    [
+        "evil.com",
+        # Sufixo: o autorizado como prefixo de outro domínio.
+        "interno.example.com.evil.com",
+        "lab.example.com.evil.com",
+        "xinterno.example.com",
+        # Caminho, fragmento e query não podem carregar o host autorizado.
+        "evil.com/interno.example.com",
+        "evil.com#interno.example.com",
+        "evil.com?x=interno.example.com",
+        # userinfo: o que vem antes do '@' NÃO é o host.
+        "interno.example.com@evil.com",
+        "http://interno.example.com@evil.com",
+        "https://user:interno.example.com@evil.com",
+        # Caixa não ajuda a escapar.
+        "INTERNO.EXAMPLE.COM.evil.com",
+        # '*' cobre um rótulo só.
+        "deep.sub.lab.example.com",
+        # Faixa: fora dela, e faixas MAIORES que a autorizada.
+        "10.0.1.5",
+        "11.0.0.5",
+        "10.0.0.0/16",
+        "0.0.0.0/0",
+    ],
+)
+def test_alvo_fora_do_escopo_e_recusado(escopo_fronteira, alvo):
+    assert escopo_fronteira.contains(alvo) is False
+
+
+@_pytest.mark.parametrize(
+    "alvo",
+    [
+        "interno.example.com",
+        "https://interno.example.com",
+        "INTERNO.EXAMPLE.COM",
+        "interno.example.com:8443",
+        "a.lab.example.com",
+        "10.0.0.5",
+        "10.0.0.0/24",
+        "10.0.0.0/25",
+    ],
+)
+def test_alvo_dentro_do_escopo_e_aceito(escopo_fronteira, alvo):
+    assert escopo_fronteira.contains(alvo) is True
